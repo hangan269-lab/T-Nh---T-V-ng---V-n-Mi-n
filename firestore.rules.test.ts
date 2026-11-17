@@ -96,6 +96,7 @@ test('firestore.rules and firebase-blueprint.json stay synchronized without Goog
     'budgetItems',
     'accounts',
     'auditLogs',
+    'backups',
   ];
 
   assert.ok(rulesText.includes('allow read, write: if false;'));

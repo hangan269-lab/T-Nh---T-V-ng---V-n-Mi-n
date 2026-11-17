@@ -11,9 +11,10 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { createDefaultAccounts, createSeedState, getDefaultPinForAccount } from '../data/seedData';
+import { createDefaultAccounts, getDefaultPinForAccount } from '../data/seedData';
 import { db } from '../firebase';
 import {
+  AppBackupSnapshot,
   AppState,
   AuditLogEntry,
   BudgetItem,
@@ -203,8 +204,7 @@ export async function ensureWorkspaceSeeded(metaCache: FirestoreMetaCache): Prom
     return;
   }
 
-  // First-time seed: full sample ERP dataset + 5 team accounts with default PINs 1111..5555
-  const seed = createSeedState();
+  // First-time seed: initialize default 5 team accounts (1111..5555) with empty business workspace
   const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
   const ts = serverTimestamp();
 
@@ -213,31 +213,28 @@ export async function ensureWorkspaceSeeded(metaCache: FirestoreMetaCache): Prom
     batch.set(metaRef, {
       id: SYSTEM_META_DOC_ID,
       workspaceId: WORKSPACE_ID,
-      isSampleData: true,
+      isSampleData: false,
       seeded: true,
       serverCreatedAt: ts,
       serverUpdatedAt: ts,
     });
   });
 
-  for (const col of BUSINESS_COLLECTIONS) {
-    const list = seed[col] as Array<{ id: string }>;
-    for (const item of list) {
-      const sanitized = sanitizeEntityForCollection(col, item);
-      const id = String(sanitized.id);
-      metaCache.set(metaKey(col, id), {
+  for (const acc of createDefaultAccounts()) {
+    const sanitized = sanitizeEntityForCollection('accounts', acc);
+    const id = String(sanitized.id);
+    metaCache.set(metaKey('accounts', id), {
+      workspaceId: WORKSPACE_ID,
+      serverCreatedAt: ts,
+    });
+    operations.push((batch) => {
+      batch.set(doc(db, 'accounts', id), {
+        ...sanitized,
         workspaceId: WORKSPACE_ID,
         serverCreatedAt: ts,
+        serverUpdatedAt: ts,
       });
-      operations.push((batch) => {
-        batch.set(doc(db, col, id), {
-          ...sanitized,
-          workspaceId: WORKSPACE_ID,
-          serverCreatedAt: ts,
-          serverUpdatedAt: ts,
-        });
-      });
-    }
+    });
   }
 
   await commitOperationsInBatches(operations, OperationType.CREATE, 'workspace-seed');
@@ -262,6 +259,7 @@ export function subscribeWorkspaceRealtime(
     budgetItems: [],
     accounts: [],
     auditLogs: [],
+    backups: [],
   };
 
   let isSampleData = false;
@@ -275,6 +273,9 @@ export function subscribeWorkspaceRealtime(
     );
     const sortedLogs = [...(latestCollections.auditLogs as AuditLogEntry[])].sort((a, b) =>
       b.timestamp.localeCompare(a.timestamp)
+    );
+    const sortedBackups = [...(latestCollections.backups as AppBackupSnapshot[])].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt)
     );
     const sortedImports = [...(latestCollections.stockImports as StockImport[])].sort((a, b) =>
       b.date.localeCompare(a.date)
@@ -308,6 +309,7 @@ export function subscribeWorkspaceRealtime(
       budgetItems: latestCollections.budgetItems as BudgetItem[],
       accounts: sortedAccounts,
       auditLogs: sortedLogs,
+      backups: sortedBackups,
       isSampleData,
     };
 

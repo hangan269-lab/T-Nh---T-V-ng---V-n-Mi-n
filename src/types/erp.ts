@@ -83,7 +83,7 @@ export interface UserAccount {
   createdAt: string;
 }
 
-export type AuditCategory = 'Đơn hàng' | 'Tài chính' | 'Kho hàng' | 'Tài khoản';
+export type AuditCategory = 'Đơn hàng' | 'Tài chính' | 'Kho hàng' | 'Tài khoản' | 'Hệ thống';
 
 export interface AuditLogEntry {
   id: string;
@@ -191,6 +191,38 @@ export interface BudgetItem {
   estimatedUnitPrice: number;
 }
 
+export interface AppBackupSnapshotData {
+  products: Product[];
+  stockImports: StockImport[];
+  orders: Order[];
+  shareholders: Shareholder[];
+  expenses: Expense[];
+  budgetItems: BudgetItem[];
+  accounts: UserAccount[];
+}
+
+export interface AppBackupSnapshotSummary {
+  productsCount: number;
+  stockImportsCount: number;
+  ordersCount: number;
+  shareholdersCount: number;
+  expensesCount: number;
+  budgetItemsCount: number;
+  accountsCount: number;
+}
+
+export interface AppBackupSnapshot {
+  id: string;
+  createdAt: string; // ISO string
+  actorId: string;
+  actorName: string;
+  category: AuditCategory;
+  action: string;
+  detail: string;
+  summary: AppBackupSnapshotSummary;
+  snapshot: AppBackupSnapshotData;
+}
+
 export interface AppState {
   products: Product[];
   stockImports: StockImport[];
@@ -200,5 +232,6 @@ export interface AppState {
   budgetItems: BudgetItem[];
   accounts: UserAccount[];
   auditLogs: AuditLogEntry[];
+  backups: AppBackupSnapshot[];
   isSampleData: boolean;
 }

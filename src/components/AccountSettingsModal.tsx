@@ -654,10 +654,10 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#A63429]/25 bg-[#A63429]/[0.04] p-4">
                   <div>
                     <div className="text-xs font-semibold text-[#A63429]">
-                      Dữ liệu hệ thống &amp; Dữ liệu mẫu
+                      Reset dữ liệu hệ thống
                     </div>
                     <p className="mt-0.5 text-[11px] text-[#57605E]">
-                      Xóa sạch toàn bộ đơn hàng, tồn kho, cổ đông, chi phí về 0 để bắt đầu nhập liệu thực tế (giữ nguyên tài khoản team).
+                      Đặt toàn bộ đơn hàng, tồn kho, cổ đông, chi phí về 0 (hệ thống tự động lưu bản sao lưu trước khi reset và giữ nguyên tài khoản team).
                     </p>
                   </div>
                   <button
@@ -669,7 +669,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63429] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#8B2920] whitespace-nowrap shrink-0"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)
+                    Reset dữ liệu về 0
                   </button>
                 </div>
               </div>

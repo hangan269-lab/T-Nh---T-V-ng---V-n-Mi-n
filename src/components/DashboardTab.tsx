@@ -48,10 +48,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       {isAdmin && hasAnyData && onRequestClearSampleData && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E4DFD5] bg-white px-5 py-3.5">
           <div className="text-xs text-[#57605E]">
-            {state.isSampleData
-              ? 'Hệ thống đang hiển thị dữ liệu mẫu để trải nghiệm.'
-              : 'Đang vận hành với dữ liệu thực tế của studio.'}{' '}
-            Bạn có thể xuất sao lưu Excel/JSON hoặc reset toàn bộ về 0 bất kỳ lúc nào.
+            Đang vận hành với dữ liệu thực tế của studio. Hệ thống tự động lưu bản sao lưu trước mỗi lần xóa thông tin.
           </div>
           <button
             type="button"
@@ -59,7 +56,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
             className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63429] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#8B2920] whitespace-nowrap shrink-0"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)
+            Reset dữ liệu về 0
           </button>
         </div>
       )}

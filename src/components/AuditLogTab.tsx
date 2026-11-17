@@ -1,10 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { History, Search } from 'lucide-react';
-import { AppState, AuditCategory } from '../types/erp';
+import { ArchiveRestore, Download, History, RotateCcw, Search } from 'lucide-react';
+import { AppBackupSnapshot, AppState, AuditCategory } from '../types/erp';
 import { formatAuditTimestamp } from '../utils/finance';
+import { ConfirmModal } from './ConfirmModal';
 
 interface AuditLogTabProps {
   state: AppState;
+  onRestoreBackup?: (backupId: string) => void;
+  onDownloadBackupJSON?: (backup: AppBackupSnapshot) => void;
 }
 
 const CATEGORIES: Array<'all' | AuditCategory> = [
@@ -13,12 +16,18 @@ const CATEGORIES: Array<'all' | AuditCategory> = [
   'Tài chính',
   'Kho hàng',
   'Tài khoản',
+  'Hệ thống',
 ];
 
-export const AuditLogTab: React.FC<AuditLogTabProps> = ({ state }) => {
+export const AuditLogTab: React.FC<AuditLogTabProps> = ({
+  state,
+  onRestoreBackup,
+  onDownloadBackupJSON,
+}) => {
   const [memberFilter, setMemberFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<'all' | AuditCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [restoreTarget, setRestoreTarget] = useState<AppBackupSnapshot | null>(null);
 
   const actorOptions = useMemo(() => {
     const names = new Set<string>(state.accounts.map((a) => a.name));
@@ -43,8 +52,91 @@ export const AuditLogTab: React.FC<AuditLogTabProps> = ({ state }) => {
     });
   }, [state.auditLogs, memberFilter, categoryFilter, searchQuery]);
 
+  const backups = state.backups ?? [];
+
   return (
     <div className="space-y-6">
+      {/* Bản sao lưu tự động trước khi xóa */}
+      <section
+        aria-labelledby="auto-backups-heading"
+        className="rounded-xl border border-[#E4DFD5] bg-white p-6"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-4 border-b border-[#ECE7DD] pb-4">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0D4F43]/10 text-[#0D4F43]">
+              <ArchiveRestore className="h-4 w-4" />
+            </div>
+            <div>
+              <h2 id="auto-backups-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
+                Bản sao lưu tự động trước khi xóa ({backups.length})
+              </h2>
+              <p className="mt-0.5 text-xs text-[#57605E]">
+                Hệ thống tự động lưu lại bản dữ liệu cũ mỗi khi xóa đơn hàng, mẫu sản phẩm, phiếu nhập kho, cổ đông, khoản chi hoặc tài khoản để bạn dễ dàng khôi phục khi cần.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {backups.length === 0 ? (
+          <div className="mt-4 rounded-lg bg-[#FAF8F4] px-5 py-6 text-center text-xs text-[#57605E]">
+            Chưa có bản sao lưu trước khi xóa nào. Mỗi thao tác xóa sau này sẽ tự động tạo một bản dự phòng tại đây.
+          </div>
+        ) : (
+          <ul className="mt-4 divide-y divide-[#ECE7DD]">
+            {backups.map((bak) => (
+              <li
+                key={bak.id}
+                className="flex flex-col gap-3 py-3.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-mono font-semibold text-[#57605E] tabular-nums">
+                      {formatAuditTimestamp(bak.createdAt)}
+                    </span>
+                    <span className="rounded bg-[#F3EFE6] px-2 py-0.5 font-medium text-[#1A1F1E]">
+                      {bak.category}
+                    </span>
+                    <span className="font-semibold text-[#0D4F43]">{bak.actorName}</span>
+                    <span className="font-medium text-[#1A1F1E]">{bak.action}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#57605E]">{bak.detail}</p>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-[#57605E] tabular-nums">
+                    <span>{bak.summary.ordersCount} đơn hàng</span>
+                    <span>{bak.summary.productsCount} mẫu</span>
+                    <span>{bak.summary.stockImportsCount} nhập kho</span>
+                    <span>{bak.summary.shareholdersCount} cổ đông</span>
+                    <span>{bak.summary.expensesCount} khoản chi</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {onDownloadBackupJSON && (
+                    <button
+                      type="button"
+                      onClick={() => onDownloadBackupJSON(bak)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Tải JSON
+                    </button>
+                  )}
+                  {onRestoreBackup && (
+                    <button
+                      type="button"
+                      onClick={() => setRestoreTarget(bak)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Khôi phục bản này
+                    </button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section
         aria-labelledby="audit-log-heading"
         className="rounded-xl border border-[#E4DFD5] bg-white p-6"
@@ -180,6 +272,25 @@ export const AuditLogTab: React.FC<AuditLogTabProps> = ({ state }) => {
           </ol>
         )}
       </section>
+
+      <ConfirmModal
+        open={Boolean(restoreTarget)}
+        title="Khôi phục dữ liệu từ bản sao lưu?"
+        description={
+          restoreTarget
+            ? `Hệ thống sẽ khôi phục toàn bộ dữ liệu về thời điểm ${formatAuditTimestamp(restoreTarget.createdAt)} (${restoreTarget.action}: ${restoreTarget.summary.ordersCount} đơn hàng, ${restoreTarget.summary.productsCount} mẫu, ${restoreTarget.summary.expensesCount} khoản chi). Dữ liệu hiện tại cũng sẽ được tự động sao lưu trước khi khôi phục.`
+            : ''
+        }
+        confirmLabel="Xác nhận khôi phục"
+        tone="primary"
+        onConfirm={() => {
+          if (restoreTarget && onRestoreBackup) {
+            onRestoreBackup(restoreTarget.id);
+          }
+          setRestoreTarget(null);
+        }}
+        onCancel={() => setRestoreTarget(null)}
+      />
     </div>
   );
 };

@@ -42,10 +42,16 @@ import {
   OrderShippingUpdate,
   parseVNDInput,
   SaveProductInput,
+  ShippingExportFilter,
 } from '../utils/finance';
 import { parseQuickOrderText } from '../utils/orderParser';
 import { ConfirmModal } from './ConfirmModal';
 import { OrderEditModal } from './OrderEditModal';
+import {
+  OrderExportFormat,
+  OrderExportModal,
+  OrderExportMode,
+} from './OrderExportModal';
 import { ProductModal } from './ProductModal';
 
 type OrderFilter = 'all' | 'today' | 'unpaid' | 'paid' | 'vtp_not_sent';
@@ -66,8 +72,12 @@ interface OrdersTabProps {
   onCancelOrder: (orderId: string) => void;
   onUpdateOrderShipping: (orderId: string, patch: OrderShippingUpdate) => void;
   onMarkOrdersShippingStatus: (orderIds: string[], status: ShippingStatus) => void;
-  onExportOrdersCSV: () => void;
-  onExportOrdersXLSX: (ordersToExport: Order[]) => void;
+  onExportOrdersCustom: (params: {
+    orders: Order[];
+    shippingFilter: ShippingExportFilter;
+    mode: OrderExportMode;
+    format: OrderExportFormat;
+  }) => void;
   onExportViettelPostCSV: (ordersToExport: Order[]) => void;
   onSaveProduct?: (
     input: SaveProductInput
@@ -95,8 +105,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   onCancelOrder,
   onUpdateOrderShipping,
   onMarkOrdersShippingStatus,
-  onExportOrdersCSV,
-  onExportOrdersXLSX,
+  onExportOrdersCustom,
   onExportViettelPostCSV,
   onSaveProduct,
 }) => {
@@ -108,6 +117,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
   const [fullEditOrder, setFullEditOrder] = useState<Order | null>(null);
+
+  // Export modal state
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportInitialFormat, setExportInitialFormat] = useState<OrderExportFormat>('xlsx');
 
   // Batch selection & VTP export confirmation
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1196,8 +1209,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => onExportOrdersXLSX(filteredOrders)}
-              disabled={filteredOrders.length === 0}
+              onClick={() => {
+                setExportInitialFormat('xlsx');
+                setExportModalOpen(true);
+              }}
+              disabled={state.orders.length === 0}
               className="inline-flex items-center gap-2 rounded-lg bg-[#166534] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#14532D] disabled:opacity-45 whitespace-nowrap shrink-0"
             >
               <FileSpreadsheet className="h-4 w-4" />
@@ -1205,8 +1221,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             </button>
             <button
               type="button"
-              onClick={onExportOrdersCSV}
-              className="inline-flex items-center gap-2 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
+              onClick={() => {
+                setExportInitialFormat('csv');
+                setExportModalOpen(true);
+              }}
+              disabled={state.orders.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] disabled:opacity-45 whitespace-nowrap shrink-0"
             >
               <Download className="h-3.5 w-3.5" />
               Xuất CSV
@@ -1792,6 +1812,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
         actorName={currentUser.name}
         onClose={() => setFullEditOrder(null)}
         onSave={onUpdateOrder}
+      />
+
+      <OrderExportModal
+        open={exportModalOpen}
+        allOrders={state.orders}
+        filteredOrders={filteredOrders}
+        initialFormat={exportInitialFormat}
+        onClose={() => setExportModalOpen(false)}
+        onExport={onExportOrdersCustom}
       />
 
       {onSaveProduct && (

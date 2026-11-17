@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ArchiveRestore,
   Boxes,
   Download,
   History,
@@ -7,7 +8,6 @@ import {
   LogOut,
   Menu,
   Plus,
-  RotateCcw,
   Settings,
   ShoppingBag,
   Trash2,
@@ -17,14 +17,17 @@ import {
 } from 'lucide-react';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { AuditLogTab } from './components/AuditLogTab';
+import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { DashboardTab } from './components/DashboardTab';
 import { FinanceTab } from './components/FinanceTab';
 import { InventoryTab } from './components/InventoryTab';
 import { LoginScreen } from './components/LoginScreen';
+import { OrderExportFormat, OrderExportMode } from './components/OrderExportModal';
 import { OrdersTab } from './components/OrdersTab';
-import { createEmptyState, createSeedState } from './data/seedData';
+import { createEmptyState } from './data/seedData';
 import {
+  AppBackupSnapshot,
   AppState,
   Expense,
   Order,
@@ -55,18 +58,23 @@ import {
   deleteStockImportWithAudit,
   deleteUserAccountWithAudit,
   ExpenseUpdatePatch,
+  exportOrderRecipientsToCSV,
   exportOrdersToCSV,
   exportPnLToCSV,
   exportStateToJSON,
   exportViettelPostCSV,
   formatDateVN,
+  getShippingMethodSlug,
   getTodayISO,
   markOrdersShippingStatus,
   OrderDraftInput,
   OrderShippingUpdate,
   parseImportedJSON,
+  resetSystemDataWithAudit,
+  restoreFromBackupWithAudit,
   SaveProductInput,
   saveProductWithValidation,
+  ShippingExportFilter,
   toggleExpenseStatus,
   updateExpenseWithAudit,
   updateOrderShipping,
@@ -75,7 +83,11 @@ import {
   updateStockImportWithValidation,
   updateUserAccountWithAudit,
 } from './utils/finance';
-import { downloadFinanceXLSX, downloadOrdersXLSX } from './utils/excelExport';
+import {
+  downloadFinanceXLSX,
+  downloadOrderRecipientsXLSX,
+  downloadOrdersXLSX,
+} from './utils/excelExport';
 import { formatFirestoreErrorForUser } from './utils/firestoreError';
 import {
   commitStateDiffToFirestore,
@@ -177,6 +189,7 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [backupModalOpen, setBackupModalOpen] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
@@ -360,7 +373,7 @@ export default function App() {
     const target = stateRef.current.orders.find((o) => o.id === orderId);
     commitNextState((prev) => deleteOrderWithAudit(prev, orderId, actor));
     showNotice(
-      `Đã xóa đơn hàng ${target?.code ?? ''}, hoàn lại tồn kho, doanh thu và đồng bộ Firestore.`
+      `Đã xóa đơn hàng ${target?.code ?? ''}, hoàn lại tồn kho và tự động lưu bản sao lưu khôi phục.`
     );
   };
 
@@ -445,7 +458,7 @@ export default function App() {
       return;
     }
     commitNextState(res.state);
-    showNotice('Đã xóa mẫu sản phẩm khỏi danh mục kho hàng.');
+    showNotice('Đã xóa mẫu sản phẩm khỏi danh mục kho hàng (đã lưu bản sao lưu khôi phục).');
   };
 
   const handleAddStockImport = (
@@ -469,7 +482,7 @@ export default function App() {
 
   const handleDeleteStockImport = (importId: string) => {
     commitNextState((prev) => deleteStockImportWithAudit(prev, importId, actor));
-    showNotice('Đã xóa phiếu nhập kho và tự động cân đối lại tồn kho, Tổng giá nhập.');
+    showNotice('Đã xóa phiếu nhập kho, cân đối lại tồn kho và tự động lưu bản sao lưu.');
   };
 
   const handleAddShareholder = (sh: Omit<Shareholder, 'id'>) => {
@@ -492,7 +505,7 @@ export default function App() {
       return;
     }
     commitNextState(res.state);
-    showNotice('Đã xóa cổ đông khỏi danh sách góp vốn.');
+    showNotice('Đã xóa cổ đông khỏi danh sách góp vốn (đã lưu bản sao lưu khôi phục).');
   };
 
   const handleAddExpense = (exp: Omit<Expense, 'id' | 'enteredBy'>) => {
@@ -516,7 +529,7 @@ export default function App() {
       return;
     }
     commitNextState(res.state);
-    showNotice('Đã xóa vĩnh viễn khoản chi và đồng bộ lại Quỹ tiền mặt.');
+    showNotice('Đã xóa khoản chi, đồng bộ lại Quỹ tiền mặt và tự động lưu bản sao lưu.');
   };
 
   const handleChangePin = (
@@ -587,9 +600,57 @@ export default function App() {
     showNotice('Đã xuất danh sách đơn hàng ra file CSV.');
   };
 
-  const handleExportOrdersXLSX = (ordersToExport: Order[]) => {
-    const filename = downloadOrdersXLSX(ordersToExport, getTodayISO());
-    showNotice(`Đã xuất ${ordersToExport.length} đơn hàng ra file Excel (${filename}).`);
+  const handleExportOrdersCustom = ({
+    orders,
+    shippingFilter,
+    mode,
+    format,
+  }: {
+    orders: Order[];
+    shippingFilter: ShippingExportFilter;
+    mode: OrderExportMode;
+    format: OrderExportFormat;
+  }) => {
+    const today = getTodayISO();
+    const shippingLabel =
+      shippingFilter === 'all' ? 'Tất cả hình thức vận chuyển' : shippingFilter;
+    const slug = getShippingMethodSlug(shippingFilter).toLowerCase().replace(/_/g, '-');
+
+    if (mode === 'recipients') {
+      if (format === 'xlsx') {
+        const filename = downloadOrderRecipientsXLSX(orders, shippingFilter, today, {
+          includeCancelled: true,
+        });
+        showNotice(
+          `Đã xuất thông tin người nhận của ${orders.length} đơn (${shippingLabel}) ra file Excel (${filename}).`
+        );
+      } else {
+        const filename = `danh-sach-nguoi-nhan-${slug}-${today}.csv`;
+        triggerDownload(
+          exportOrderRecipientsToCSV(orders, shippingFilter, { includeCancelled: true }),
+          filename,
+          'text/csv;charset=utf-8'
+        );
+        showNotice(
+          `Đã xuất thông tin người nhận của ${orders.length} đơn (${shippingLabel}) ra file CSV (${filename}).`
+        );
+      }
+      return;
+    }
+
+    if (format === 'xlsx') {
+      const filename = downloadOrdersXLSX(orders, today, shippingFilter);
+      showNotice(
+        `Đã xuất ${orders.length} đơn hàng (${shippingLabel}) ra file Excel (${filename}).`
+      );
+    } else {
+      const filename =
+        shippingFilter === 'all' ? `don-hang-${today}.csv` : `don-hang-${slug}-${today}.csv`;
+      triggerDownload(exportOrdersToCSV(orders), filename, 'text/csv;charset=utf-8');
+      showNotice(
+        `Đã xuất ${orders.length} đơn hàng (${shippingLabel}) ra file CSV (${filename}).`
+      );
+    }
   };
 
   const handleExportFinanceXLSX = () => {
@@ -632,24 +693,43 @@ export default function App() {
     }
   };
 
-  const handleClearSampleData = () => {
-    if (currentUser.role !== 'Admin') {
-      showNotice('Chỉ tài khoản Admin mới có quyền xóa dữ liệu mẫu.', 'error');
-      setConfirmClearOpen(false);
+  const handleResetSystemData = () => {
+    const res = resetSystemDataWithAudit(stateRef.current, actor);
+    setConfirmClearOpen(false);
+    if (!res.ok) {
+      showNotice(res.error, 'error');
       return;
     }
-    commitNextState((prev) => createEmptyState(prev.accounts));
-    setConfirmClearOpen(false);
-    showNotice('Đã xóa toàn bộ dữ liệu mẫu trên Firestore. Bạn có thể bắt đầu nhập liệu thực tế.');
+    commitNextState(res.state);
+    showNotice('Đã reset toàn bộ dữ liệu về 0 và tự động lưu bản sao lưu trước khi reset.');
   };
 
-  const handleRestoreSampleData = () => {
-    if (currentUser.role !== 'Admin') {
-      showNotice('Chỉ tài khoản Admin mới có quyền nạp lại dữ liệu mẫu.', 'error');
+  const handleRestoreBackup = (backupId: string) => {
+    const res = restoreFromBackupWithAudit(stateRef.current, backupId, actor);
+    if (!res.ok) {
+      showNotice(res.error, 'error');
       return;
     }
-    commitNextState(createSeedState());
-    showNotice('Đã nạp lại bộ dữ liệu mẫu lên Firestore để trải nghiệm.');
+    commitNextState(res.state);
+    showNotice(
+      `Đã khôi phục dữ liệu từ bản sao lưu "${res.backup.action}" (${res.backup.summary.ordersCount} đơn, ${res.backup.summary.productsCount} mẫu).`
+    );
+  };
+
+  const handleDownloadBackupJSON = (backup: AppBackupSnapshot) => {
+    const datePart = backup.createdAt.slice(0, 10) || getTodayISO();
+    const stateToExport: AppState = {
+      ...backup.snapshot,
+      auditLogs: stateRef.current.auditLogs,
+      backups: [],
+      isSampleData: false,
+    };
+    triggerDownload(
+      exportStateToJSON(stateToExport),
+      `sao-luu-cu-${datePart}-${backup.id}.json`,
+      'application/json;charset=utf-8'
+    );
+    showNotice('Đã tải file JSON bản sao lưu cũ.');
   };
 
   const activeNav = NAV_ITEMS.find((n) => n.id === activeTab) ?? NAV_ITEMS[0];
@@ -748,26 +828,28 @@ export default function App() {
           Xuất CSV Đơn hàng
         </button>
 
-        {currentUser.role === 'Admin' &&
-          (hasAnyData ? (
-            <button
-              type="button"
-              onClick={() => setConfirmClearOpen(true)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#A63429]/25 bg-white px-3 py-2 text-xs font-medium text-[#A63429] transition-colors hover:bg-[#A63429]/5 whitespace-nowrap"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Reset dữ liệu về 0
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleRestoreSampleData}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-white px-3 py-2 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#0D4F43]/5 whitespace-nowrap"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Nạp dữ liệu mẫu
-            </button>
-          ))}
+        <button
+          type="button"
+          onClick={() => {
+            setBackupModalOpen(true);
+            setMobileMenuOpen(false);
+          }}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-[#0D4F43]/[0.04] px-3 py-2 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#0D4F43]/10 whitespace-nowrap"
+        >
+          <ArchiveRestore className="h-3.5 w-3.5" />
+          Bản sao lưu ({state.backups.length})
+        </button>
+
+        {currentUser.role === 'Admin' && hasAnyData && (
+          <button
+            type="button"
+            onClick={() => setConfirmClearOpen(true)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#A63429]/25 bg-white px-3 py-2 text-xs font-medium text-[#A63429] transition-colors hover:bg-[#A63429]/5 whitespace-nowrap"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Reset dữ liệu về 0
+          </button>
+        )}
 
         <input
           ref={fileInputRef}
@@ -947,8 +1029,7 @@ export default function App() {
               onCancelOrder={handleCancelOrder}
               onUpdateOrderShipping={handleUpdateOrderShipping}
               onMarkOrdersShippingStatus={handleMarkOrdersShippingStatus}
-              onExportOrdersCSV={handleExportOrdersCSV}
-              onExportOrdersXLSX={handleExportOrdersXLSX}
+              onExportOrdersCustom={handleExportOrdersCustom}
               onExportViettelPostCSV={handleExportViettelPostCSV}
               onSaveProduct={handleSaveProduct}
             />
@@ -982,17 +1063,31 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'audit' && <AuditLogTab state={state} />}
+          {activeTab === 'audit' && (
+            <AuditLogTab
+              state={state}
+              onRestoreBackup={handleRestoreBackup}
+              onDownloadBackupJSON={handleDownloadBackupJSON}
+            />
+          )}
         </main>
       </div>
 
       <ConfirmModal
         open={confirmClearOpen}
-        title="Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)?"
-        description="Hành động này sẽ xóa sạch toàn bộ đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông, chi phí và nhật ký hiện tại trên Cloud Firestore (giữ nguyên tài khoản thành viên) để đặt lại Dashboard, P&L và Quỹ tiền mặt về 0."
+        title="Reset toàn bộ dữ liệu hệ thống về 0?"
+        description="Hành động này sẽ đặt lại đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông và chi phí về 0 trên Cloud Firestore (giữ nguyên tài khoản thành viên). Hệ thống sẽ tự động lưu 1 bản sao lưu toàn bộ dữ liệu trước khi reset để bạn có thể khôi phục lại bất cứ lúc nào."
         confirmLabel="Xác nhận Reset về 0"
-        onConfirm={handleClearSampleData}
+        onConfirm={handleResetSystemData}
         onCancel={() => setConfirmClearOpen(false)}
+      />
+
+      <BackupRestoreModal
+        open={backupModalOpen}
+        backups={state.backups}
+        onClose={() => setBackupModalOpen(false)}
+        onRestoreBackup={handleRestoreBackup}
+        onDownloadBackupJSON={handleDownloadBackupJSON}
       />
 
       <AccountSettingsModal

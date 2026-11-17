@@ -1,6 +1,7 @@
 import {
   ALL_BRANDS,
   ALL_SIZES,
+  AppBackupSnapshot,
   AppState,
   AuditCategory,
   AuditLogEntry,
@@ -112,6 +113,157 @@ export function createAuditEntry(input: {
     detail: input.detail,
     oldValue: input.oldValue,
     newValue: input.newValue,
+  };
+}
+
+export const MAX_BACKUP_SNAPSHOTS = 25;
+
+function cloneSnapshotList<T>(list: T[]): T[] {
+  return JSON.parse(JSON.stringify(list)) as T[];
+}
+
+export function createPreDeleteBackupSnapshot(
+  state: AppState,
+  actor: ActorIdentity,
+  meta: {
+    category: AuditCategory;
+    action: string;
+    detail: string;
+    createdAt?: string;
+  }
+): AppBackupSnapshot {
+  const products = cloneSnapshotList(state.products);
+  const stockImports = cloneSnapshotList(state.stockImports);
+  const orders = cloneSnapshotList(state.orders);
+  const shareholders = cloneSnapshotList(state.shareholders);
+  const expenses = cloneSnapshotList(state.expenses);
+  const budgetItems = cloneSnapshotList(state.budgetItems);
+  const accounts = cloneSnapshotList(state.accounts);
+
+  return {
+    id: `bak_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    createdAt: meta.createdAt ?? new Date().toISOString(),
+    actorId: actor.id,
+    actorName: actor.name,
+    category: meta.category,
+    action: meta.action,
+    detail: meta.detail,
+    summary: {
+      productsCount: products.length,
+      stockImportsCount: stockImports.length,
+      ordersCount: orders.length,
+      shareholdersCount: shareholders.length,
+      expensesCount: expenses.length,
+      budgetItemsCount: budgetItems.length,
+      accountsCount: accounts.length,
+    },
+    snapshot: {
+      products,
+      stockImports,
+      orders,
+      shareholders,
+      expenses,
+      budgetItems,
+      accounts,
+    },
+  };
+}
+
+export function prependBackupSnapshot(
+  existingBackups: AppBackupSnapshot[] | undefined,
+  snapshot: AppBackupSnapshot
+): AppBackupSnapshot[] {
+  const current = Array.isArray(existingBackups) ? existingBackups : [];
+  return [snapshot, ...current].slice(0, MAX_BACKUP_SNAPSHOTS);
+}
+
+export function restoreFromBackupWithAudit(
+  state: AppState,
+  backupId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): { ok: true; state: AppState; backup: AppBackupSnapshot } | { ok: false; error: string } {
+  const target = (state.backups ?? []).find((b) => b.id === backupId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy bản sao lưu cần khôi phục.' };
+  }
+
+  const safetyBackup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Hệ thống',
+    action: 'Trước khi khôi phục bản sao lưu',
+    detail: `${actor.name} đã tạo điểm sao lưu an toàn trước khi khôi phục bản lúc ${formatAuditTimestamp(target.createdAt)} (${target.action})`,
+  });
+
+  const restoredAccounts =
+    actor.role === 'Admin' && target.snapshot.accounts.length > 0
+      ? cloneSnapshotList(target.snapshot.accounts)
+      : state.accounts;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Hệ thống',
+    action: 'Khôi phục bản sao lưu',
+    detail: `${actor.name} đã khôi phục dữ liệu từ bản sao lưu "${target.action}" (${target.detail})`,
+    oldValue: `${state.orders.length} đơn · ${state.products.length} mẫu`,
+    newValue: `${target.summary.ordersCount} đơn · ${target.summary.productsCount} mẫu`,
+  });
+
+  return {
+    ok: true,
+    backup: target,
+    state: {
+      ...state,
+      products: cloneSnapshotList(target.snapshot.products),
+      stockImports: cloneSnapshotList(target.snapshot.stockImports),
+      orders: cloneSnapshotList(target.snapshot.orders),
+      shareholders: cloneSnapshotList(target.snapshot.shareholders),
+      expenses: cloneSnapshotList(target.snapshot.expenses),
+      budgetItems: cloneSnapshotList(target.snapshot.budgetItems),
+      accounts: restoredAccounts,
+      auditLogs: [log, ...state.auditLogs],
+      backups: prependBackupSnapshot(state.backups, safetyBackup),
+      isSampleData: false,
+    },
+  };
+}
+
+export function resetSystemDataWithAudit(
+  state: AppState,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): { ok: true; state: AppState; backup: AppBackupSnapshot } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return { ok: false, error: 'Chỉ tài khoản Admin mới có quyền reset dữ liệu hệ thống.' };
+  }
+
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Hệ thống',
+    action: 'Trước khi Reset hệ thống về 0',
+    detail: `${actor.name} đã reset dữ liệu toàn hệ thống về 0 (${state.orders.length} đơn, ${state.products.length} mẫu, ${state.expenses.length} chi phí)`,
+  });
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Hệ thống',
+    action: 'Reset dữ liệu về 0',
+    detail: `${actor.name} đã reset dữ liệu hệ thống về 0 và tự động lưu bản sao lưu khôi phục`,
+    oldValue: `${state.orders.length} đơn · ${state.products.length} mẫu`,
+    newValue: '0 (Đã lưu bản sao lưu)',
+  });
+
+  return {
+    ok: true,
+    backup,
+    state: {
+      products: [],
+      stockImports: [],
+      orders: [],
+      shareholders: [],
+      expenses: [],
+      budgetItems: [],
+      accounts: state.accounts,
+      auditLogs: [log, ...state.auditLogs],
+      backups: prependBackupSnapshot(state.backups, backup),
+      isSampleData: false,
+    },
   };
 }
 
@@ -332,6 +484,12 @@ export function deleteUserAccountWithAudit(
     return { ok: false, error: 'Hệ thống phải giữ lại ít nhất 1 tài khoản Admin.' };
   }
 
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Tài khoản',
+    action: 'Trước khi xóa tài khoản thành viên',
+    detail: `Xóa tài khoản '${target.name}' (${target.username} · ${target.role})`,
+  });
+
   const log = createAuditEntry({
     actor,
     category: 'Tài khoản',
@@ -347,6 +505,7 @@ export function deleteUserAccountWithAudit(
       ...state,
       accounts: state.accounts.filter((a) => a.id !== targetUserId),
       auditLogs: [log, ...state.auditLogs],
+      backups: prependBackupSnapshot(state.backups, backup),
     },
   };
 }
@@ -1358,6 +1517,12 @@ export function deleteOrderWithAudit(
   if (!target) return state;
 
   const totalAmount = getOrderTotal(target);
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Đơn hàng',
+    action: `Trước khi xóa đơn #${target.code}`,
+    detail: `Xóa đơn hàng #${target.code} của khách ${target.customerName} (${formatCompactVND(totalAmount)})`,
+  });
+
   const nextOrders = state.orders.filter((o) => o.id !== orderId);
   const nextExpenses = state.expenses.filter((e) => e.linkedOrderId !== orderId);
 
@@ -1375,6 +1540,7 @@ export function deleteOrderWithAudit(
     orders: nextOrders,
     expenses: nextExpenses,
     auditLogs: [log, ...state.auditLogs],
+    backups: prependBackupSnapshot(state.backups, backup),
   };
 }
 
@@ -1549,6 +1715,12 @@ export function deleteExpenseWithAudit(
     return { ok: false, error: 'Không tìm thấy khoản chi cần xóa.' };
   }
 
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Tài chính',
+    action: 'Trước khi xóa khoản chi',
+    detail: `Xóa khoản chi '${target.detail}' (${formatCompactVND(target.amount)} · ${target.paidBy})`,
+  });
+
   const nextExpenses = state.expenses.filter((e) => e.id !== expenseId);
   const nextOrders = target.linkedOrderId
     ? state.orders.map((o) =>
@@ -1572,6 +1744,7 @@ export function deleteExpenseWithAudit(
       expenses: nextExpenses,
       orders: nextOrders,
       auditLogs: [log, ...state.auditLogs],
+      backups: prependBackupSnapshot(state.backups, backup),
     },
   };
 }
@@ -1665,6 +1838,12 @@ export function deleteShareholderWithAudit(
     return { ok: false, error: 'Không tìm thấy cổ đông cần xóa.' };
   }
 
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Tài chính',
+    action: 'Trước khi xóa cổ đông góp vốn',
+    detail: `Xóa cổ đông '${target.name}' (Vốn góp: ${formatCompactVND(target.contribution)})`,
+  });
+
   const log = createAuditEntry({
     actor,
     category: 'Tài chính',
@@ -1680,6 +1859,7 @@ export function deleteShareholderWithAudit(
       ...state,
       shareholders: state.shareholders.filter((s) => s.id !== shareholderId),
       auditLogs: [log, ...state.auditLogs],
+      backups: prependBackupSnapshot(state.backups, backup),
     },
   };
 }
@@ -1986,6 +2166,12 @@ export function deleteProductWithAudit(
     ? ` (đã bảo toàn dữ liệu trên ${history.orderCount} đơn hàng cũ)`
     : '';
 
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Kho hàng',
+    action: `Trước khi xóa mẫu ${target.code}`,
+    detail: `Xóa mẫu ${target.code} (${target.name})${historyNote}`,
+  });
+
   const log = createAuditEntry({
     actor,
     category: 'Kho hàng',
@@ -2001,6 +2187,7 @@ export function deleteProductWithAudit(
       ...state,
       products: state.products.filter((p) => p.id !== productId),
       auditLogs: [log, ...state.auditLogs],
+      backups: prependBackupSnapshot(state.backups, backup),
     },
   };
 }
@@ -2132,6 +2319,14 @@ export function deleteStockImportWithAudit(
   if (!target) return state;
 
   const product = state.products.find((p) => p.id === target.productId);
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Kho hàng',
+    action: 'Trước khi xóa phiếu nhập kho',
+    detail: `Xóa phiếu nhập +${target.quantity} ${
+      product ? `${product.code} · ${product.name}` : target.productId
+    } (${target.size})`,
+  });
+
   const nextImports = state.stockImports.filter((i) => i.id !== importId);
   const nextExpenses = state.expenses.filter((e) => e.linkedImportId !== importId);
 
@@ -2151,6 +2346,7 @@ export function deleteStockImportWithAudit(
     stockImports: nextImports,
     expenses: nextExpenses,
     auditLogs: [log, ...state.auditLogs],
+    backups: prependBackupSnapshot(state.backups, backup),
   };
 }
 
@@ -2217,6 +2413,12 @@ export function deleteBudgetItemWithAudit(
   const target = state.budgetItems.find((b) => b.id === budgetId);
   if (!target) return state;
 
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Tài chính',
+    action: 'Trước khi xóa dự trù ngân sách',
+    detail: `Xóa dòng dự trù '${target.detail}' (${formatCompactVND(target.quantity * target.estimatedUnitPrice)})`,
+  });
+
   const log = createAuditEntry({
     actor,
     category: 'Tài chính',
@@ -2230,6 +2432,7 @@ export function deleteBudgetItemWithAudit(
     ...state,
     budgetItems: state.budgetItems.filter((b) => b.id !== budgetId),
     auditLogs: [log, ...state.auditLogs],
+    backups: prependBackupSnapshot(state.backups, backup),
   };
 }
 
@@ -2312,6 +2515,9 @@ export function parseImportedJSON(
     const auditLogs = Array.isArray(candidate.auditLogs)
       ? (candidate.auditLogs as AuditLogEntry[])
       : [];
+    const backups = Array.isArray(candidate.backups)
+      ? (candidate.backups as AppBackupSnapshot[])
+      : [];
     return {
       ok: true,
       state: {
@@ -2327,6 +2533,7 @@ export function parseImportedJSON(
         budgetItems: candidate.budgetItems,
         accounts,
         auditLogs,
+        backups,
         isSampleData: Boolean(candidate.isSampleData),
       },
     };
@@ -2394,6 +2601,51 @@ export function exportOrdersToCSV(orders: Order[]): string {
   });
 
   // UTF-8 BOM for proper Vietnamese rendering in Excel
+  return '\uFEFF' + [header, ...lines].join('\n');
+}
+
+export type ShippingExportFilter = 'all' | ShippingMethod;
+
+export function getShippingMethodSlug(shippingFilter: ShippingExportFilter): string {
+  switch (shippingFilter) {
+    case ShippingMethod.VIETTEL_POST:
+      return 'Viettel_Post';
+    case ShippingMethod.LOCAL_SHIP:
+      return 'Ship_noi_thanh';
+    case ShippingMethod.PICKUP:
+      return 'Khach_tu_lay';
+    default:
+      return 'Tat_ca_van_chuyen';
+  }
+}
+
+export function filterOrdersByShippingMethod(
+  orders: Order[],
+  shippingFilter: ShippingExportFilter,
+  options: { includeCancelled?: boolean } = {}
+): Order[] {
+  const includeCancelled = options.includeCancelled ?? false;
+  return orders.filter((o) => {
+    if (!includeCancelled && o.isCancelled) return false;
+    if (shippingFilter !== 'all' && o.shippingMethod !== shippingFilter) return false;
+    return true;
+  });
+}
+
+export function exportOrderRecipientsToCSV(
+  orders: Order[],
+  shippingFilter: ShippingExportFilter = 'all',
+  options: { includeCancelled?: boolean } = {}
+): string {
+  const matched = filterOrdersByShippingMethod(orders, shippingFilter, options);
+  const header = ['Tên người nhận', 'Số điện thoại', 'Địa chỉ'].join(',');
+  const lines = matched.map((o) =>
+    [
+      escapeCSV(o.customerName),
+      escapeCSV(o.customerPhone),
+      escapeCSV(o.shippingAddress),
+    ].join(',')
+  );
   return '\uFEFF' + [header, ...lines].join('\n');
 }
 

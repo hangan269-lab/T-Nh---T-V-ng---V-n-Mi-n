@@ -3,11 +3,14 @@ import { AppState, BRAND_SUBTITLES, Order } from '../types/erp';
 import {
   computeBrandPnL,
   computeFundSummary,
+  filterOrdersByShippingMethod,
   formatDateVN,
   getOrderCOD,
   getOrderItemsSubtotal,
   getOrderTotal,
+  getShippingMethodSlug,
   getTodayISO,
+  ShippingExportFilter,
 } from './finance';
 
 function formatFilenameDate(isoDate: string): string {
@@ -141,9 +144,59 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
   return wb;
 }
 
-export function downloadOrdersXLSX(orders: Order[], dateISO: string = getTodayISO()): string {
+export function downloadOrdersXLSX(
+  orders: Order[],
+  dateISO: string = getTodayISO(),
+  shippingFilter: ShippingExportFilter = 'all'
+): string {
   const wb = buildOrdersWorkbook(orders);
-  const filename = `Danh_sach_don_hang_${formatFilenameDate(dateISO)}.xlsx`;
+  const suffix = shippingFilter === 'all' ? '' : `_${getShippingMethodSlug(shippingFilter)}`;
+  const filename = `Danh_sach_don_hang${suffix}_${formatFilenameDate(dateISO)}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  return filename;
+}
+
+export function buildOrderRecipientsWorkbook(
+  orders: Order[],
+  shippingFilter: ShippingExportFilter = 'all',
+  options: { includeCancelled?: boolean } = {}
+): XLSX.WorkBook {
+  const matched = filterOrdersByShippingMethod(orders, shippingFilter, options);
+  const headers = ['Tên người nhận', 'Số điện thoại', 'Địa chỉ'];
+  const rows: Array<Array<string>> = matched.map((o) => [
+    String(o.customerName ?? ''),
+    String(o.customerPhone ?? ''),
+    String(o.shippingAddress ?? ''),
+  ]);
+
+  const aoa = [headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Preserve leading zeros in phone numbers (col index 1) by marking as text format
+  for (let r = 1; r < aoa.length; r += 1) {
+    const addr = XLSX.utils.encode_cell({ r, c: 1 });
+    const cell = ws[addr];
+    if (cell) {
+      cell.t = 's';
+      cell.z = '@';
+    }
+  }
+
+  autoFitColumns(ws, aoa, 16, 65);
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Danh_sach_nguoi_nhan');
+  return wb;
+}
+
+export function downloadOrderRecipientsXLSX(
+  orders: Order[],
+  shippingFilter: ShippingExportFilter = 'all',
+  dateISO: string = getTodayISO(),
+  options: { includeCancelled?: boolean } = {}
+): string {
+  const wb = buildOrderRecipientsWorkbook(orders, shippingFilter, options);
+  const filename = `Danh_sach_nguoi_nhan_${getShippingMethodSlug(shippingFilter)}_${formatFilenameDate(dateISO)}.xlsx`;
   XLSX.writeFile(wb, filename);
   return filename;
 }

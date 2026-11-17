@@ -180,7 +180,7 @@
         "timestamp": { "type": "string", "maxLength": 64 },
         "actorId": { "type": "string", "maxLength": 128 },
         "actorName": { "type": "string", "maxLength": 160 },
-        "category": { "type": "string", "enum": ["Đơn hàng", "Tài chính", "Kho hàng", "Tài khoản"] },
+        "category": { "type": "string", "enum": ["Đơn hàng", "Tài chính", "Kho hàng", "Tài khoản", "Hệ thống"] },
         "action": { "type": "string", "maxLength": 160 },
         "detail": { "type": "string", "maxLength": 500 },
         "oldValue": { "type": "string", "maxLength": 500 },
@@ -189,6 +189,26 @@
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "workspaceId", "timestamp", "actorId", "actorName", "category", "action", "detail", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "BackupSnapshot": {
+      "title": "BackupSnapshot",
+      "description": "Automatic pre-delete full workspace snapshot stored before destructive actions for 1-click recovery.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "enum": ["Đơn hàng", "Tài chính", "Kho hàng", "Tài khoản", "Hệ thống"] },
+        "action": { "type": "string", "maxLength": 160 },
+        "detail": { "type": "string", "maxLength": 500 },
+        "summary": { "type": "object", "description": "Counts of records preserved in this backup snapshot." },
+        "snapshot": { "type": "object", "description": "Native map containing products, stockImports, orders, shareholders, expenses, budgetItems, and accounts lists." },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "workspaceId", "createdAt", "actorId", "actorName", "category", "action", "detail", "summary", "snapshot", "serverCreatedAt", "serverUpdatedAt"]
     }
   },
   "firestore": {
@@ -227,6 +247,10 @@
     "/auditLogs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLogEntry" },
       "description": "Audit log entries synced in real time."
+    },
+    "/backups/{backupId}": {
+      "schema": { "$ref": "#/entities/BackupSnapshot" },
+      "description": "Automatic pre-delete snapshots synced in real time for safe recovery."
     }
   }
 }

@@ -75,7 +75,9 @@ test('computeStateDiffOps produces minimal per-document batch ops across all 8 c
   const afterDelete = deleteOrderWithAudit(created.state, created.order.id);
   const diffDelete = computeStateDiffOps(created.state, afterDelete);
   assert.equal(diffDelete.deletes.length, 2); // deleted order + linked expense
-  assert.equal(diffDelete.upserts.length, 1); // 1 delete audit log
+  assert.equal(diffDelete.upserts.length, 2); // 1 delete audit log + 1 pre-delete backup snapshot
+  assert.ok(diffDelete.upserts.some((u) => u.collection === 'auditLogs' && u.isCreate));
+  assert.ok(diffDelete.upserts.some((u) => u.collection === 'backups' && u.isCreate));
 
   const empty = createEmptyState(prev.accounts);
   const diffReset = computeStateDiffOps(prev, empty);
@@ -88,7 +90,7 @@ test('computeStateDiffOps produces minimal per-document batch ops across all 8 c
   );
 });
 
-test('all seed records sanitize cleanly with no undefined values', () => {
+test('all seed records and backup snapshots sanitize cleanly with no undefined values', () => {
   const seed = createSeedState();
   for (const p of seed.products) {
     const out = sanitizeEntityForCollection('products', p);
@@ -96,4 +98,8 @@ test('all seed records sanitize cleanly with no undefined values', () => {
       assert.notEqual(v, undefined);
     }
   }
+  const afterDel = deleteOrderWithAudit(seed, 'ord_02');
+  const bakOut = sanitizeEntityForCollection('backups', afterDel.backups[0]);
+  assert.equal(JSON.stringify(bakOut).includes('undefined'), false);
+  assert.ok(Array.isArray((bakOut.snapshot as { orders: unknown[] }).orders));
 });

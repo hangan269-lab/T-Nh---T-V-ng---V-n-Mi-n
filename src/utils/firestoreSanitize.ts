@@ -1,4 +1,5 @@
 import {
+  AppBackupSnapshot,
   AppState,
   AuditLogEntry,
   BudgetItem,
@@ -24,6 +25,7 @@ export const BUSINESS_COLLECTIONS = [
   'budgetItems',
   'accounts',
   'auditLogs',
+  'backups',
 ] as const;
 
 export type BusinessCollectionName = (typeof BUSINESS_COLLECTIONS)[number];
@@ -247,6 +249,68 @@ export function sanitizeAuditLogPayload(entry: AuditLogEntry): Record<string, un
   return doc;
 }
 
+export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<string, unknown> {
+  const rawSnap = bak.snapshot ?? {
+    products: [],
+    stockImports: [],
+    orders: [],
+    shareholders: [],
+    expenses: [],
+    budgetItems: [],
+    accounts: [],
+  };
+
+  const products = (Array.isArray(rawSnap.products) ? rawSnap.products : [])
+    .slice(0, 500)
+    .map(sanitizeProductPayload);
+  const stockImports = (Array.isArray(rawSnap.stockImports) ? rawSnap.stockImports : [])
+    .slice(0, 1000)
+    .map(sanitizeStockImportPayload);
+  const orders = (Array.isArray(rawSnap.orders) ? rawSnap.orders : [])
+    .slice(0, 1000)
+    .map(sanitizeOrderPayload);
+  const shareholders = (Array.isArray(rawSnap.shareholders) ? rawSnap.shareholders : [])
+    .slice(0, 100)
+    .map(sanitizeShareholderPayload);
+  const expenses = (Array.isArray(rawSnap.expenses) ? rawSnap.expenses : [])
+    .slice(0, 1000)
+    .map(sanitizeExpensePayload);
+  const budgetItems = (Array.isArray(rawSnap.budgetItems) ? rawSnap.budgetItems : [])
+    .slice(0, 500)
+    .map(sanitizeBudgetItemPayload);
+  const accounts = (Array.isArray(rawSnap.accounts) ? rawSnap.accounts : [])
+    .slice(0, 100)
+    .map(sanitizeUserAccountPayload);
+
+  return {
+    id: sanitizeId(bak.id, 'bak'),
+    createdAt: clampStr(bak.createdAt || new Date().toISOString(), BLUEPRINT_LIMITS.TIMESTAMP_MAX),
+    actorId: clampStr(bak.actorId || 'system', BLUEPRINT_LIMITS.ID_MAX),
+    actorName: clampStr(bak.actorName || 'Hệ thống', BLUEPRINT_LIMITS.NAME_MAX),
+    category: bak.category || 'Hệ thống',
+    action: clampStr(bak.action || 'Sao lưu dữ liệu', BLUEPRINT_LIMITS.NAME_MAX),
+    detail: clampStr(bak.detail || bak.action || 'Sao lưu tự động', BLUEPRINT_LIMITS.NOTE_MAX),
+    summary: {
+      productsCount: clampNum(bak.summary?.productsCount ?? products.length, 0, 500),
+      stockImportsCount: clampNum(bak.summary?.stockImportsCount ?? stockImports.length, 0, 1000),
+      ordersCount: clampNum(bak.summary?.ordersCount ?? orders.length, 0, 1000),
+      shareholdersCount: clampNum(bak.summary?.shareholdersCount ?? shareholders.length, 0, 100),
+      expensesCount: clampNum(bak.summary?.expensesCount ?? expenses.length, 0, 1000),
+      budgetItemsCount: clampNum(bak.summary?.budgetItemsCount ?? budgetItems.length, 0, 500),
+      accountsCount: clampNum(bak.summary?.accountsCount ?? accounts.length, 0, 100),
+    },
+    snapshot: {
+      products,
+      stockImports,
+      orders,
+      shareholders,
+      expenses,
+      budgetItems,
+      accounts,
+    },
+  };
+}
+
 export function sanitizeEntityForCollection(
   collectionName: BusinessCollectionName,
   record: unknown
@@ -268,6 +332,8 @@ export function sanitizeEntityForCollection(
       return sanitizeUserAccountPayload(record as UserAccount);
     case 'auditLogs':
       return sanitizeAuditLogPayload(record as AuditLogEntry);
+    case 'backups':
+      return sanitizeBackupSnapshotPayload(record as AppBackupSnapshot);
   }
 }
 

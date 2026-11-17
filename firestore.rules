@@ -212,11 +212,66 @@ service cloud.firestore {
         data.timestamp is string && data.timestamp.size() <= 64 &&
         data.actorId is string && data.actorId.size() <= 128 &&
         data.actorName is string && data.actorName.size() <= 160 &&
-        data.category in ['Đơn hàng', 'Tài chính', 'Kho hàng', 'Tài khoản'] &&
+        data.category in ['Đơn hàng', 'Tài chính', 'Kho hàng', 'Tài khoản', 'Hệ thống'] &&
         data.action is string && data.action.size() >= 1 && data.action.size() <= 160 &&
         data.detail is string && data.detail.size() >= 1 && data.detail.size() <= 500 &&
         isOptString(data, 'oldValue', 500) &&
         isOptString(data, 'newValue', 500) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidBackupSummary(s) {
+      return s is map &&
+        s.keys().hasAll([
+          'productsCount', 'stockImportsCount', 'ordersCount',
+          'shareholdersCount', 'expensesCount', 'budgetItemsCount', 'accountsCount'
+        ]) &&
+        s.keys().hasOnly([
+          'productsCount', 'stockImportsCount', 'ordersCount',
+          'shareholdersCount', 'expensesCount', 'budgetItemsCount', 'accountsCount'
+        ]) &&
+        s.productsCount is number && s.productsCount >= 0 &&
+        s.stockImportsCount is number && s.stockImportsCount >= 0 &&
+        s.ordersCount is number && s.ordersCount >= 0 &&
+        s.shareholdersCount is number && s.shareholdersCount >= 0 &&
+        s.expensesCount is number && s.expensesCount >= 0 &&
+        s.budgetItemsCount is number && s.budgetItemsCount >= 0 &&
+        s.accountsCount is number && s.accountsCount >= 0;
+    }
+
+    function isValidBackupPayloadMap(snap) {
+      return snap is map &&
+        snap.keys().hasAll(['products', 'stockImports', 'orders', 'shareholders', 'expenses', 'budgetItems', 'accounts']) &&
+        snap.keys().hasOnly(['products', 'stockImports', 'orders', 'shareholders', 'expenses', 'budgetItems', 'accounts']) &&
+        snap.products is list && snap.products.size() <= 500 &&
+        snap.stockImports is list && snap.stockImports.size() <= 1000 &&
+        snap.orders is list && snap.orders.size() <= 1000 &&
+        snap.shareholders is list && snap.shareholders.size() <= 100 &&
+        snap.expenses is list && snap.expenses.size() <= 1000 &&
+        snap.budgetItems is list && snap.budgetItems.size() <= 500 &&
+        snap.accounts is list && snap.accounts.size() <= 100;
+    }
+
+    function isValidBackupSnapshot(data) {
+      return data.keys().hasAll([
+          'id', 'workspaceId', 'createdAt', 'actorId', 'actorName',
+          'category', 'action', 'detail', 'summary', 'snapshot',
+          'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'workspaceId', 'createdAt', 'actorId', 'actorName',
+          'category', 'action', 'detail', 'summary', 'snapshot',
+          'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.actorId is string && data.actorId.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 160 &&
+        data.category in ['Đơn hàng', 'Tài chính', 'Kho hàng', 'Tài khoản', 'Hệ thống'] &&
+        data.action is string && data.action.size() >= 1 && data.action.size() <= 160 &&
+        data.detail is string && data.detail.size() >= 1 && data.detail.size() <= 500 &&
+        isValidBackupSummary(data.summary) &&
+        isValidBackupPayloadMap(data.snapshot) &&
         hasValidBaseMeta(data);
     }
 
@@ -293,6 +348,14 @@ service cloud.firestore {
       allow create: if isValidId(logId) && isValidAuditLog(incoming()) && hasValidCreateMeta(incoming());
       allow update: if isValidId(logId) && isValidAuditLog(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
       allow delete: if isValidId(logId) && isLegacyOrStudioWorkspace(existing());
+    }
+
+    match /backups/{backupId} {
+      allow get: if isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isStudioWorkspace(existing());
+      allow create: if isValidId(backupId) && isValidBackupSnapshot(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isValidId(backupId) && isValidBackupSnapshot(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
     }
   }
 }

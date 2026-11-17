@@ -25,9 +25,11 @@ import {
   deleteShareholderWithAudit,
   deleteStockImportWithAudit,
   deleteUserAccountWithAudit,
+  exportOrderRecipientsToCSV,
   exportOrdersToCSV,
   exportStateToJSON,
   exportViettelPostCSV,
+  filterOrdersByShippingMethod,
   formatVND,
   getAvailableStock,
   getOrderCOD,
@@ -37,6 +39,8 @@ import {
   markOrdersShippingStatus,
   parseImportedJSON,
   parseVNDInput,
+  resetSystemDataWithAudit,
+  restoreFromBackupWithAudit,
   saveProductWithAudit,
   saveProductWithValidation,
   suggestNextProductCode,
@@ -49,7 +53,11 @@ import {
   updateStockImportWithValidation,
   updateUserAccountWithAudit,
 } from './finance';
-import { buildFinanceWorkbook, buildOrdersWorkbook } from './excelExport';
+import {
+  buildFinanceWorkbook,
+  buildOrderRecipientsWorkbook,
+  buildOrdersWorkbook,
+} from './excelExport';
 import { createSeedState } from '../data/seedData';
 import {
   Brand,
@@ -957,4 +965,139 @@ test('order optional discount deducts from total, COD, P&L, and rejects negative
   assert.equal(ws['K2'].v, 2700000);
 });
 
+test('recipient export filters by shipping method (all vs individual) and outputs Name, Phone, Address', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+
+  // Seed has 4 active orders:
+  // ord_01: PICKUP (Khách tự lấy)
+  // ord_02: LOCAL_SHIP (Ship nội thành)
+  // ord_03: VIETTEL_POST (Viettel Post)
+  // ord_04: VIETTEL_POST (Viettel Post)
+  const allActive = filterOrdersByShippingMethod(seed.orders, 'all');
+  assert.equal(allActive.length, 4);
+
+  const vtpOnly = filterOrdersByShippingMethod(seed.orders, ShippingMethod.VIETTEL_POST);
+  assert.equal(vtpOnly.length, 2);
+  assert.ok(vtpOnly.every((o) => o.shippingMethod === ShippingMethod.VIETTEL_POST));
+
+  const localOnly = filterOrdersByShippingMethod(seed.orders, ShippingMethod.LOCAL_SHIP);
+  assert.equal(localOnly.length, 1);
+  assert.equal(localOnly[0].id, 'ord_02');
+
+  const pickupOnly = filterOrdersByShippingMethod(seed.orders, ShippingMethod.PICKUP);
+  assert.equal(pickupOnly.length, 1);
+  assert.equal(pickupOnly[0].id, 'ord_01');
+
+  // Cancelled orders are excluded by default
+  const afterCancel = cancelOrder(seed, 'ord_02');
+  assert.equal(filterOrdersByShippingMethod(afterCancel.orders, 'all').length, 3);
+  assert.equal(
+    filterOrdersByShippingMethod(afterCancel.orders, ShippingMethod.LOCAL_SHIP).length,
+    0
+  );
+  assert.equal(
+    filterOrdersByShippingMethod(afterCancel.orders, ShippingMethod.LOCAL_SHIP, {
+      includeCancelled: true,
+    }).length,
+    1
+  );
+
+  // CSV recipient export contains UTF-8 BOM and strictly 3 columns: Tên người nhận, Số điện thoại, Địa chỉ
+  const csvAll = exportOrderRecipientsToCSV(seed.orders, 'all');
+  assert.ok(csvAll.startsWith('\uFEFF'));
+  const csvAllLines = csvAll.replace(/^\uFEFF/, '').split('\n');
+  assert.equal(csvAllLines[0], 'Tên người nhận,Số điện thoại,Địa chỉ');
+  assert.equal(csvAllLines.length, 5); // header + 4 orders
+
+  const csvLocal = exportOrderRecipientsToCSV(seed.orders, ShippingMethod.LOCAL_SHIP);
+  const csvLocalLines = csvLocal.replace(/^\uFEFF/, '').split('\n');
+  assert.equal(csvLocalLines.length, 2);
+  assert.ok(csvLocalLines[1].includes('Trần Hoàng Bảo'));
+  assert.ok(csvLocalLines[1].includes('0987612409'));
+
+  // Excel recipient workbook builds clean 3-column sheet preserving leading zero in phone
+  const wbVtp = buildOrderRecipientsWorkbook(seed.orders, ShippingMethod.VIETTEL_POST);
+  assert.deepEqual(wbVtp.SheetNames, ['Danh_sach_nguoi_nhan']);
+  const wsVtp = wbVtp.Sheets['Danh_sach_nguoi_nhan'];
+  assert.equal(wsVtp['A1'].v, 'Tên người nhận');
+  assert.equal(wsVtp['B1'].v, 'Số điện thoại');
+  assert.equal(wsVtp['C1'].v, 'Địa chỉ');
+  assert.equal(wsVtp['D1'], undefined);
+  assert.equal(wsVtp['B2'].t, 's');
+  assert.ok(String(wsVtp['B2'].v).startsWith('0'));
+  assert.equal(wsVtp['A4'], undefined); // only header + 2 VTP rows
+});
+
+test('every delete and reset automatically creates pre-delete backup snapshot and supports 1-click restore', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+  const giangActor: ActorIdentity = { id: 'acc_giang', name: 'Giang', role: 'Thành viên' };
+
+  // 1. Delete an order -> pre-delete backup captures the deleted order + linked expense
+  const afterDelOrder = deleteOrderWithAudit(seed, 'ord_02', giangActor);
+  assert.equal(afterDelOrder.orders.some((o) => o.id === 'ord_02'), false);
+  assert.equal(afterDelOrder.backups.length, 1);
+  const orderBackup = afterDelOrder.backups[0];
+  assert.equal(orderBackup.actorName, 'Giang');
+  assert.equal(orderBackup.summary.ordersCount, seed.orders.length);
+  assert.ok(orderBackup.snapshot.orders.some((o) => o.id === 'ord_02'));
+  assert.ok(orderBackup.snapshot.expenses.some((e) => e.linkedOrderId === 'ord_02'));
+
+  // 2. Delete product, stock import, shareholder, expense, budget, user account -> each appends a backup
+  const afterDelProdRes = deleteProductWithAudit(afterDelOrder, 'prd_tn_03', nganActor);
+  assert.equal(afterDelProdRes.ok, true);
+  if (!afterDelProdRes.ok) return;
+  assert.equal(afterDelProdRes.state.backups.length, 2);
+
+  const afterDelImp = deleteStockImportWithAudit(afterDelProdRes.state, 'imp_01', nganActor);
+  assert.equal(afterDelImp.backups.length, 3);
+
+  const afterDelShRes = deleteShareholderWithAudit(afterDelImp, 'sh_04', nganActor);
+  assert.equal(afterDelShRes.ok, true);
+  if (!afterDelShRes.ok) return;
+  assert.equal(afterDelShRes.state.backups.length, 4);
+
+  const afterDelExpRes = deleteExpenseWithAudit(afterDelShRes.state, 'exp_01', nganActor);
+  assert.equal(afterDelExpRes.ok, true);
+  if (!afterDelExpRes.ok) return;
+  assert.equal(afterDelExpRes.state.backups.length, 5);
+
+  const afterDelBdg = deleteBudgetItemWithAudit(afterDelExpRes.state, 'bdg_01', nganActor);
+  assert.equal(afterDelBdg.backups.length, 6);
+
+  const afterDelAccRes = deleteUserAccountWithAudit(afterDelBdg, 'acc_linh', nganActor);
+  assert.equal(afterDelAccRes.ok, true);
+  if (!afterDelAccRes.ok) return;
+  assert.equal(afterDelAccRes.state.backups.length, 7);
+
+  // 3. Reset system to 0 -> saves backup of state before reset, clears business data, keeps accounts & backups
+  const resetRes = resetSystemDataWithAudit(afterDelAccRes.state, nganActor);
+  assert.equal(resetRes.ok, true);
+  if (!resetRes.ok) return;
+  assert.equal(resetRes.state.orders.length, 0);
+  assert.equal(resetRes.state.products.length, 0);
+  assert.equal(resetRes.state.expenses.length, 0);
+  assert.equal(resetRes.state.shareholders.length, 0);
+  assert.equal(resetRes.state.backups.length, 8);
+
+  // 4. Restore from the very first pre-delete backup (orderBackup) -> brings back ALL original orders, products, expenses, shareholders, accounts!
+  const restoreRes = restoreFromBackupWithAudit(resetRes.state, orderBackup.id, nganActor);
+  assert.equal(restoreRes.ok, true);
+  if (!restoreRes.ok) return;
+  assert.equal(restoreRes.state.orders.length, seed.orders.length);
+  assert.ok(restoreRes.state.orders.some((o) => o.id === 'ord_02'));
+  assert.equal(restoreRes.state.products.length, seed.products.length);
+  assert.equal(restoreRes.state.shareholders.length, seed.shareholders.length);
+  assert.equal(restoreRes.state.expenses.length, seed.expenses.length);
+  assert.equal(restoreRes.state.accounts.length, seed.accounts.length);
+  assert.equal(restoreRes.state.backups.length, 9); // safety backup before restore also saved
+  assert.equal(restoreRes.state.auditLogs[0].action, 'Khôi phục bản sao lưu');
+
+  // 5. Non-admin restoring business data restores orders/products while keeping current accounts intact
+  const nonAdminRestore = restoreFromBackupWithAudit(resetRes.state, orderBackup.id, giangActor);
+  assert.equal(nonAdminRestore.ok, true);
+  if (!nonAdminRestore.ok) return;
+  assert.equal(nonAdminRestore.state.orders.length, seed.orders.length);
+  assert.equal(nonAdminRestore.state.accounts.length, resetRes.state.accounts.length);
+});
 

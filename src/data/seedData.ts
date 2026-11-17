@@ -488,10 +488,14 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         detail: 'Linh đã nhập kho +4 VM-01 · Hộp Trà Ô Long Phượng Hoàng (Freesize) · Đơn giá 220.000đ',
       },
     ],
+    backups: [],
   };
 }
 
-export function createEmptyState(existingAccounts?: UserAccount[]): AppState {
+export function createEmptyState(
+  existingAccounts?: UserAccount[],
+  existingBackups: AppState['backups'] = []
+): AppState {
   return {
     isSampleData: false,
     accounts: existingAccounts && existingAccounts.length > 0 ? existingAccounts : createDefaultAccounts(),
@@ -502,5 +506,6 @@ export function createEmptyState(existingAccounts?: UserAccount[]): AppState {
     expenses: [],
     budgetItems: [],
     auditLogs: [],
+    backups: existingBackups,
   };
 }
