@@ -1,0 +1,6 @@
+{
+  "name": "Tơ Nhã · Tơ Vương · Vân Miên — Quản Lý Vận Hành & Tài Chính",
+  "description": "Hệ thống quản lý vận hành, bán hàng, kho hàng nhập-xuất-tồn và tài chính toàn diện cho 3 nhánh thương hiệu Tơ Nhã, Tơ Vương và Vân Miên.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
