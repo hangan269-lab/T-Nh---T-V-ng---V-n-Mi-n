@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import {
   Boxes,
   Calculator,
@@ -26,6 +27,7 @@ import { InventoryTab } from './components/InventoryTab';
 import { LoginScreen } from './components/LoginScreen';
 import { OrdersTab } from './components/OrdersTab';
 import { createEmptyState, createSeedState } from './data/seedData';
+import { auth, googleProvider } from './firebase';
 import {
   AppState,
   BudgetItem,
@@ -82,10 +84,18 @@ import {
   updateUserAccountWithAudit,
 } from './utils/finance';
 import { downloadFinanceXLSX, downloadOrdersXLSX } from './utils/excelExport';
+import { formatFirestoreErrorForUser } from './utils/firestoreError';
+import { computeMemberEmails } from './utils/firestoreSanitize';
+import {
+  commitStateDiffToFirestore,
+  ensureWorkspaceSeeded,
+  FirestoreMetaCache,
+  subscribeWorkspaceRealtime,
+  updateWorkspaceMemberEmails,
+} from './utils/firestoreSync';
 
 type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'budget' | 'audit';
 
-const STORAGE_KEY = 'tn_tv_vm_erp_state_v1';
 const SESSION_USER_KEY = 'tn_tv_vm_active_user_v1';
 
 const NAV_ITEMS: Array<{
@@ -132,22 +142,7 @@ const NAV_ITEMS: Array<{
   },
 ];
 
-function loadInitialState(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = parseImportedJSON(raw);
-      if (parsed.ok) {
-        return parsed.state;
-      }
-    }
-  } catch {
-    // Fallback to seed data if storage is unavailable
-  }
-  return createSeedState();
-}
-
-function loadInitialSessionUserId(accounts: UserAccount[]): string | null {
+function resolveSessionUserId(accounts: UserAccount[]): string | null {
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1' && accounts[0]) {
@@ -158,7 +153,7 @@ function loadInitialSessionUserId(accounts: UserAccount[]): string | null {
       return saved;
     }
   } catch {
-    // Ignore storage errors
+    // Ignore sessionStorage errors
   }
   return null;
 }
@@ -176,10 +171,22 @@ function triggerDownload(content: string, filename: string, mimeType: string) {
 }
 
 export default function App() {
-  const [state, setState] = useState<AppState>(() => loadInitialState());
-  const [currentUserId, setCurrentUserId] = useState<string | null>(() =>
-    loadInitialSessionUserId(loadInitialState().accounts)
-  );
+  const initialEmpty = createEmptyState();
+  const [state, setState] = useState<AppState>(initialEmpty);
+  const stateRef = useRef<AppState>(initialEmpty);
+  const metaCacheRef = useRef<FirestoreMetaCache>(new Map());
+
+  const [authReady, setAuthReady] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [firestoreLoading, setFirestoreLoading] = useState(false);
+  const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
+  const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
+  const [memberEmails, setMemberEmails] = useState<string[]>([]);
+  const [fatalError, setFatalError] = useState<Error | null>(null);
+
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const currentUserIdRef = useRef<string | null>(null);
+
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [isOrderCreateOpen, setIsOrderCreateOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -190,17 +197,14 @@ export default function App() {
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  if (fatalError) {
+    throw fatalError;
+  }
+
   const currentUser = state.accounts.find((a) => a.id === currentUserId) ?? null;
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // Ignore storage quota errors
-    }
-  }, [state]);
-
-  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
     try {
       if (currentUserId) {
         sessionStorage.setItem(SESSION_USER_KEY, currentUserId);
@@ -208,9 +212,93 @@ export default function App() {
         sessionStorage.removeItem(SESSION_USER_KEY);
       }
     } catch {
-      // Ignore storage errors
+      // Ignore sessionStorage errors
     }
   }, [currentUserId]);
+
+  useEffect(() => {
+    let activeUnsubscribe: (() => void) | null = null;
+    let cancelled = false;
+
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (activeUnsubscribe) {
+        activeUnsubscribe();
+        activeUnsubscribe = null;
+      }
+
+      if (!user) {
+        metaCacheRef.current.clear();
+        const empty = createEmptyState();
+        stateRef.current = empty;
+        setState(empty);
+        setFirebaseUser(null);
+        setMemberEmails([]);
+        setCurrentUserId(null);
+        setFirestoreLoading(false);
+        setAuthReady(true);
+        return;
+      }
+
+      if (!user.emailVerified) {
+        setGoogleAuthError('Tài khoản Google chưa xác minh email. Vui lòng sử dụng tài khoản đã xác minh.');
+        setFirebaseUser(null);
+        setAuthReady(true);
+        setFirestoreLoading(false);
+        await signOut(auth).catch(() => undefined);
+        return;
+      }
+
+      setGoogleAuthError(null);
+      setFirebaseUser(user);
+      setAuthReady(true);
+      setFirestoreLoading(true);
+      setMemberEmails(computeMemberEmails([], user.email));
+
+      try {
+        await ensureWorkspaceSeeded(user, metaCacheRef.current);
+        if (cancelled) return;
+
+        activeUnsubscribe = subscribeWorkspaceRealtime(user, metaCacheRef.current, {
+          onStateChange: (nextState, meta) => {
+            if (cancelled) return;
+            stateRef.current = nextState;
+            setState(nextState);
+            setMemberEmails(meta.memberEmails);
+            if (!currentUserIdRef.current && nextState.accounts.length > 0) {
+              const resolved = resolveSessionUserId(nextState.accounts);
+              if (resolved) {
+                setCurrentUserId(resolved);
+              }
+            }
+          },
+          onReady: () => {
+            if (!cancelled) {
+              setFirestoreLoading(false);
+            }
+          },
+          onError: (err) => {
+            if (!cancelled) {
+              setFirestoreLoading(false);
+              setFatalError(err instanceof Error ? err : new Error(String(err)));
+            }
+          },
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setFirestoreLoading(false);
+          setFatalError(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubAuth();
+      if (activeUnsubscribe) {
+        activeUnsubscribe();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!notice) return;
@@ -220,6 +308,79 @@ export default function App() {
 
   const showNotice = (text: string, type: 'success' | 'error' = 'success') => {
     setNotice({ type, text });
+  };
+
+  const commitNextState = (nextOrUpdater: AppState | ((prev: AppState) => AppState)) => {
+    const prevState = stateRef.current;
+    const nextState =
+      typeof nextOrUpdater === 'function' ? nextOrUpdater(prevState) : nextOrUpdater;
+    if (nextState === prevState) return;
+    stateRef.current = nextState;
+    setState(nextState);
+
+    if (firebaseUser) {
+      void commitStateDiffToFirestore(
+        prevState,
+        nextState,
+        firebaseUser,
+        memberEmails,
+        metaCacheRef.current
+      ).catch((error) => {
+        showNotice(formatFirestoreErrorForUser(error), 'error');
+      });
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleAuthError(null);
+    setIsSigningInGoogle(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('popup-closed-by-user')) {
+        setGoogleAuthError('Bạn đã đóng cửa sổ đăng nhập Google trước khi hoàn tất.');
+      } else if (msg.includes('popup-blocked')) {
+        setGoogleAuthError('Trình duyệt đang chặn cửa sổ bật lên. Vui lòng cho phép popup để đăng nhập Google.');
+      } else {
+        setGoogleAuthError('Không thể đăng nhập bằng Google. Vui lòng thử lại.');
+      }
+    } finally {
+      setIsSigningInGoogle(false);
+    }
+  };
+
+  const handleGoogleSignOut = async () => {
+    setCurrentUserId(null);
+    setSettingsOpen(false);
+    setIsOrderCreateOpen(false);
+    setMobileMenuOpen(false);
+    setNotice(null);
+    try {
+      await signOut(auth);
+    } catch {
+      showNotice('Không thể đăng xuất khỏi Google.', 'error');
+    }
+  };
+
+  const handleUpdateMemberEmails = async (
+    nextEmails: string[]
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    if (!firebaseUser) {
+      return { ok: false, error: 'Chưa kết nối tài khoản Google.' };
+    }
+    try {
+      const updated = await updateWorkspaceMemberEmails(
+        nextEmails,
+        stateRef.current,
+        firebaseUser,
+        metaCacheRef.current
+      );
+      setMemberEmails(updated);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: formatFirestoreErrorForUser(error) };
+    }
   };
 
   const handleLogin = (
@@ -242,8 +403,24 @@ export default function App() {
     setNotice(null);
   };
 
-  if (!currentUser) {
-    return <LoginScreen accounts={state.accounts} onLogin={handleLogin} />;
+  if (!firebaseUser || firestoreLoading || !currentUser) {
+    return (
+      <LoginScreen
+        accounts={state.accounts}
+        authReady={authReady}
+        firebaseUserEmail={firebaseUser?.email ?? null}
+        firestoreLoading={firestoreLoading}
+        googleAuthError={googleAuthError}
+        isSigningInGoogle={isSigningInGoogle}
+        onGoogleSignIn={() => {
+          void handleGoogleSignIn();
+        }}
+        onGoogleSignOut={() => {
+          void handleGoogleSignOut();
+        }}
+        onLogin={handleLogin}
+      />
+    );
   }
 
   const actor: ActorIdentity = {
@@ -261,16 +438,16 @@ export default function App() {
   const handleCreateOrder = (
     draft: OrderDraftInput
   ): { ok: true } | { ok: false; error: string } => {
-    const result = createOrderWithValidation(state, draft, actor);
+    const result = createOrderWithValidation(stateRef.current, draft, actor);
     if (!result.ok) {
       return result;
     }
-    setState(result.state);
+    commitNextState(result.state);
     const hasShipCost = result.order.shopShippingCost > 0;
     showNotice(
       hasShipCost
-        ? `Đã tạo đơn ${result.order.code} (${actor.name}), trừ tồn kho và tự động hạch toán cước vận chuyển vào Quỹ.`
-        : `Đã tạo đơn ${result.order.code} (${actor.name}) và tự động trừ tồn kho.`
+        ? `Đã tạo đơn ${result.order.code} (${actor.name}), trừ tồn kho và tự động đồng bộ Firestore.`
+        : `Đã tạo đơn ${result.order.code} (${actor.name}), trừ tồn kho và đồng bộ Firestore.`
     );
     return { ok: true };
   };
@@ -279,39 +456,39 @@ export default function App() {
     orderId: string,
     draft: OrderDraftInput
   ): { ok: true } | { ok: false; error: string } => {
-    const result = updateOrderWithValidation(state, orderId, draft, actor);
+    const result = updateOrderWithValidation(stateRef.current, orderId, draft, actor);
     if (!result.ok) {
       return result;
     }
-    setState(result.state);
+    commitNextState(result.state);
     showNotice(
-      `Đã cập nhật đơn hàng ${result.order.code}, tự động cân đối lại tồn kho và cước vận chuyển.`
+      `Đã cập nhật đơn hàng ${result.order.code}, tự động cân đối lại tồn kho và đồng bộ Firestore.`
     );
     return { ok: true };
   };
 
   const handleDeleteOrder = (orderId: string) => {
-    const target = state.orders.find((o) => o.id === orderId);
-    setState((prev) => deleteOrderWithAudit(prev, orderId, actor));
+    const target = stateRef.current.orders.find((o) => o.id === orderId);
+    commitNextState((prev) => deleteOrderWithAudit(prev, orderId, actor));
     showNotice(
-      `Đã xóa đơn hàng ${target?.code ?? ''}, tự động hoàn lại tồn kho, doanh thu và cước VC liên kết.`
+      `Đã xóa đơn hàng ${target?.code ?? ''}, hoàn lại tồn kho, doanh thu và đồng bộ Firestore.`
     );
   };
 
   const handleConfirmPayment = (orderId: string) => {
-    setState((prev) => confirmOrderPayment(prev, orderId, actor));
+    commitNextState((prev) => confirmOrderPayment(prev, orderId, actor));
     showNotice(`Đã xác nhận thanh toán bởi ${actor.name} (COD cập nhật về 0 đ).`);
   };
 
   const handleCancelOrder = (orderId: string) => {
-    setState((prev) => cancelOrder(prev, orderId, actor));
+    commitNextState((prev) => cancelOrder(prev, orderId, actor));
     showNotice(
       `Đã hủy đơn hàng bởi ${actor.name}, hoàn lại tồn kho và xóa khoản chi cước vận chuyển liên kết.`
     );
   };
 
   const handleUpdateOrderShipping = (orderId: string, patch: OrderShippingUpdate) => {
-    setState((prev) => updateOrderShipping(prev, orderId, patch, actor));
+    commitNextState((prev) => updateOrderShipping(prev, orderId, patch, actor));
     if (patch.shopShippingCost !== undefined) {
       showNotice(
         patch.shopShippingCost > 0
@@ -324,7 +501,7 @@ export default function App() {
   };
 
   const handleMarkOrdersShippingStatus = (orderIds: string[], status: ShippingStatus) => {
-    setState((prev) => markOrdersShippingStatus(prev, orderIds, status, actor));
+    commitNextState((prev) => markOrdersShippingStatus(prev, orderIds, status, actor));
     showNotice(`Đã chuyển ${orderIds.length} đơn sang trạng thái "${status}".`);
   };
 
@@ -341,16 +518,16 @@ export default function App() {
   const handleSaveProduct = (
     productInput: SaveProductInput
   ): { ok: true; hasStockAdjustment?: boolean } | { ok: false; error: string } => {
-    const res = saveProductWithValidation(state, productInput, actor);
+    const res = saveProductWithValidation(stateRef.current, productInput, actor);
     if (!res.ok) {
       return res;
     }
-    setState(res.state);
+    commitNextState(res.state);
     if (productInput.id) {
       showNotice(
         res.hasStockAdjustment
-          ? 'Đã cập nhật mẫu sản phẩm, điều chỉnh tồn kho và lưu nhật ký chỉnh sửa.'
-          : 'Đã cập nhật thông tin mẫu sản phẩm và lưu nhật ký chỉnh sửa.'
+          ? 'Đã cập nhật mẫu sản phẩm, điều chỉnh tồn kho và đồng bộ Firestore.'
+          : 'Đã cập nhật thông tin mẫu sản phẩm và đồng bộ Firestore.'
       );
     } else {
       showNotice(`Đã thêm mẫu sản phẩm mới ${res.product.code} (${res.product.name}).`);
@@ -359,12 +536,12 @@ export default function App() {
   };
 
   const handleArchiveProduct = (productId: string, archive: boolean) => {
-    const res = archiveProductWithAudit(state, productId, archive, actor);
+    const res = archiveProductWithAudit(stateRef.current, productId, archive, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    setState(res.state);
+    commitNextState(res.state);
     showNotice(
       archive
         ? 'Đã chuyển mẫu sang Ngừng kinh doanh (ẩn khỏi đơn mới, giữ nguyên số liệu báo cáo cũ).'
@@ -373,12 +550,12 @@ export default function App() {
   };
 
   const handleDeleteProduct = (productId: string) => {
-    const res = deleteProductWithAudit(state, productId, actor);
+    const res = deleteProductWithAudit(stateRef.current, productId, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    setState(res.state);
+    commitNextState(res.state);
     showNotice('Đã xóa mẫu sản phẩm khỏi danh mục kho hàng.');
   };
 
@@ -386,7 +563,7 @@ export default function App() {
     imp: Omit<StockImport, 'id' | 'enteredBy'>,
     alsoRecordCashExpense: boolean
   ) => {
-    setState((prev) => addStockImportWithAudit(prev, imp, alsoRecordCashExpense, actor));
+    commitNextState((prev) => addStockImportWithAudit(prev, imp, alsoRecordCashExpense, actor));
     showNotice(`Đã nhập kho mới (${actor.name}) và cập nhật Tổng giá nhập.`);
   };
 
@@ -394,20 +571,20 @@ export default function App() {
     importId: string,
     patch: Omit<StockImport, 'id' | 'enteredBy'>
   ): { ok: true } | { ok: false; error: string } => {
-    const res = updateStockImportWithValidation(state, importId, patch, actor);
+    const res = updateStockImportWithValidation(stateRef.current, importId, patch, actor);
     if (!res.ok) return res;
-    setState(res.state);
+    commitNextState(res.state);
     showNotice('Đã cập nhật phiếu nhập kho, tồn kho và Tổng giá nhập.');
     return { ok: true };
   };
 
   const handleDeleteStockImport = (importId: string) => {
-    setState((prev) => deleteStockImportWithAudit(prev, importId, actor));
+    commitNextState((prev) => deleteStockImportWithAudit(prev, importId, actor));
     showNotice('Đã xóa phiếu nhập kho và tự động cân đối lại tồn kho, Tổng giá nhập.');
   };
 
   const handleAddShareholder = (sh: Omit<Shareholder, 'id'>) => {
-    setState((prev) => addShareholderWithAudit(prev, sh, actor));
+    commitNextState((prev) => addShareholderWithAudit(prev, sh, actor));
     showNotice(`Đã thêm cổ đông ${sh.name}.`);
   };
 
@@ -415,41 +592,41 @@ export default function App() {
     id: string,
     patch: Partial<Pick<Shareholder, 'name' | 'contribution' | 'note'>>
   ) => {
-    setState((prev) => updateShareholderWithAudit(prev, id, patch, actor));
+    commitNextState((prev) => updateShareholderWithAudit(prev, id, patch, actor));
     showNotice('Đã cập nhật vốn góp cổ đông và ghi lại giá trị cũ → mới vào Lịch sử.');
   };
 
   const handleDeleteShareholder = (id: string) => {
-    const res = deleteShareholderWithAudit(state, id, actor);
+    const res = deleteShareholderWithAudit(stateRef.current, id, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    setState(res.state);
+    commitNextState(res.state);
     showNotice('Đã xóa cổ đông khỏi danh sách góp vốn.');
   };
 
   const handleAddExpense = (exp: Omit<Expense, 'id' | 'enteredBy'>) => {
-    setState((prev) => addExpenseWithAudit(prev, exp, actor));
+    commitNextState((prev) => addExpenseWithAudit(prev, exp, actor));
     showNotice(`Đã ghi nhận khoản chi mới (${actor.name}) vào Quỹ tiền mặt.`);
   };
 
   const handleUpdateExpense = (id: string, patch: ExpenseUpdatePatch) => {
-    setState((prev) => updateExpenseWithAudit(prev, id, patch, actor));
+    commitNextState((prev) => updateExpenseWithAudit(prev, id, patch, actor));
     showNotice('Đã cập nhật khoản chi và lưu vết giá trị cũ → mới vào Lịch sử thao tác.');
   };
 
   const handleToggleExpenseStatus = (id: string) => {
-    setState((prev) => toggleExpenseStatus(prev, id, actor));
+    commitNextState((prev) => toggleExpenseStatus(prev, id, actor));
   };
 
   const handleDeleteExpense = (id: string) => {
-    const res = deleteExpenseWithAudit(state, id, actor);
+    const res = deleteExpenseWithAudit(stateRef.current, id, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    setState(res.state);
+    commitNextState(res.state);
     showNotice('Đã xóa vĩnh viễn khoản chi và đồng bộ lại Quỹ tiền mặt.');
   };
 
@@ -458,9 +635,15 @@ export default function App() {
     newPin: string,
     currentPinForSelf?: string
   ): { ok: true } | { ok: false; error: string } => {
-    const res = changeUserPinWithAudit(state, targetUserId, newPin, actor, currentPinForSelf);
+    const res = changeUserPinWithAudit(
+      stateRef.current,
+      targetUserId,
+      newPin,
+      actor,
+      currentPinForSelf
+    );
     if (!res.ok) return res;
-    setState(res.state);
+    commitNextState(res.state);
     return { ok: true };
   };
 
@@ -470,9 +653,9 @@ export default function App() {
     role: UserRole;
     pin: string;
   }): { ok: true } | { ok: false; error: string } => {
-    const res = createUserAccountWithAudit(state, input, actor);
+    const res = createUserAccountWithAudit(stateRef.current, input, actor);
     if (!res.ok) return res;
-    setState(res.state);
+    commitNextState(res.state);
     return { ok: true };
   };
 
@@ -480,40 +663,40 @@ export default function App() {
     targetUserId: string,
     input: { name: string; username: string; role: UserRole; pin?: string }
   ): { ok: true } | { ok: false; error: string } => {
-    const res = updateUserAccountWithAudit(state, targetUserId, input, actor);
+    const res = updateUserAccountWithAudit(stateRef.current, targetUserId, input, actor);
     if (!res.ok) return res;
-    setState(res.state);
+    commitNextState(res.state);
     return { ok: true };
   };
 
   const handleDeleteAccount = (
     targetUserId: string
   ): { ok: true } | { ok: false; error: string } => {
-    const res = deleteUserAccountWithAudit(state, targetUserId, actor);
+    const res = deleteUserAccountWithAudit(stateRef.current, targetUserId, actor);
     if (!res.ok) return res;
-    setState(res.state);
+    commitNextState(res.state);
     return { ok: true };
   };
 
   const handleAddBudgetItem = (item: Omit<BudgetItem, 'id'>) => {
-    setState((prev) => addBudgetItemWithAudit(prev, item, actor));
+    commitNextState((prev) => addBudgetItemWithAudit(prev, item, actor));
     showNotice('Đã thêm hạng mục dự trù ngân sách.');
   };
 
   const handleUpdateBudgetItem = (id: string, patch: Omit<BudgetItem, 'id'>) => {
-    setState((prev) => updateBudgetItemWithAudit(prev, id, patch, actor));
+    commitNextState((prev) => updateBudgetItemWithAudit(prev, id, patch, actor));
     showNotice('Đã cập nhật hạng mục dự trù ngân sách.');
   };
 
   const handleDeleteBudgetItem = (id: string) => {
-    setState((prev) => deleteBudgetItemWithAudit(prev, id, actor));
+    commitNextState((prev) => deleteBudgetItemWithAudit(prev, id, actor));
     showNotice('Đã xóa hạng mục dự trù ngân sách.');
   };
 
   const handleExportJSON = () => {
     const today = getTodayISO();
     triggerDownload(
-      exportStateToJSON(state),
+      exportStateToJSON(stateRef.current),
       `tonha-tovuong-vanmien-backup-${today}.json`,
       'application/json;charset=utf-8'
     );
@@ -523,7 +706,7 @@ export default function App() {
   const handleExportOrdersCSV = () => {
     const today = getTodayISO();
     triggerDownload(
-      exportOrdersToCSV(state.orders),
+      exportOrdersToCSV(stateRef.current.orders),
       `don-hang-${today}.csv`,
       'text/csv;charset=utf-8'
     );
@@ -536,17 +719,17 @@ export default function App() {
   };
 
   const handleExportFinanceXLSX = () => {
-    const filename = downloadFinanceXLSX(state, getTodayISO());
+    const filename = downloadFinanceXLSX(stateRef.current, getTodayISO());
     showNotice(`Đã xuất Báo cáo Tài chính Thu Chi & Tổng hợp ra file Excel (${filename}).`);
   };
 
   const handleExportPnLCSV = () => {
     const today = getTodayISO();
     const pnl = computeBrandPnL(
-      state.products,
-      state.stockImports,
-      state.orders,
-      state.expenses
+      stateRef.current.products,
+      stateRef.current.stockImports,
+      stateRef.current.orders,
+      stateRef.current.expenses
     );
     triggerDownload(
       exportPnLToCSV(pnl),
@@ -566,8 +749,8 @@ export default function App() {
         showNotice(parsed.error, 'error');
         return;
       }
-      setState(parsed.state);
-      showNotice('Đã khôi phục toàn bộ dữ liệu từ file JSON.');
+      commitNextState(parsed.state);
+      showNotice('Đã khôi phục toàn bộ dữ liệu từ file JSON và đồng bộ lên Firestore.');
     } catch {
       showNotice('Không thể đọc file sao lưu đã chọn.', 'error');
     } finally {
@@ -581,9 +764,9 @@ export default function App() {
       setConfirmClearOpen(false);
       return;
     }
-    setState((prev) => createEmptyState(prev.accounts));
+    commitNextState((prev) => createEmptyState(prev.accounts));
     setConfirmClearOpen(false);
-    showNotice('Đã xóa toàn bộ dữ liệu mẫu. Bạn có thể bắt đầu nhập liệu thực tế.');
+    showNotice('Đã xóa toàn bộ dữ liệu mẫu trên Firestore. Bạn có thể bắt đầu nhập liệu thực tế.');
   };
 
   const handleRestoreSampleData = () => {
@@ -591,8 +774,8 @@ export default function App() {
       showNotice('Chỉ tài khoản Admin mới có quyền nạp lại dữ liệu mẫu.', 'error');
       return;
     }
-    setState(createSeedState());
-    showNotice('Đã nạp lại bộ dữ liệu mẫu để trải nghiệm.');
+    commitNextState(createSeedState());
+    showNotice('Đã nạp lại bộ dữ liệu mẫu lên Firestore để trải nghiệm.');
   };
 
   const activeNav = NAV_ITEMS.find((n) => n.id === activeTab) ?? NAV_ITEMS[0];
@@ -662,7 +845,7 @@ export default function App() {
       {/* Backup & Data Management */}
       <div className="border-t border-[#ECE7DD] pt-4 space-y-2">
         <div className="text-[11px] font-semibold text-[#57605E]">
-          Sao lưu &amp; Dữ liệu
+          Sao lưu &amp; Dữ liệu Cloud
         </div>
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -936,7 +1119,7 @@ export default function App() {
       <ConfirmModal
         open={confirmClearOpen}
         title="Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)?"
-        description="Hành động này sẽ xóa sạch toàn bộ đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông, chi phí, dự trù và nhật ký hiện tại (giữ nguyên tài khoản thành viên) để đặt lại Dashboard, P&L và Quỹ tiền mặt về 0."
+        description="Hành động này sẽ xóa sạch toàn bộ đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông, chi phí, dự trù và nhật ký hiện tại trên Cloud Firestore (giữ nguyên tài khoản thành viên) để đặt lại Dashboard, P&L và Quỹ tiền mặt về 0."
         confirmLabel="Xác nhận Reset về 0"
         onConfirm={handleClearSampleData}
         onCancel={() => setConfirmClearOpen(false)}
@@ -947,6 +1130,12 @@ export default function App() {
         currentUser={currentUser}
         accounts={state.accounts}
         hasSystemData={hasAnyData}
+        firebaseUserEmail={firebaseUser.email}
+        memberEmails={memberEmails}
+        onGoogleSignOut={() => {
+          void handleGoogleSignOut();
+        }}
+        onUpdateMemberEmails={handleUpdateMemberEmails}
         onClose={() => setSettingsOpen(false)}
         onChangePin={handleChangePin}
         onCreateAccount={handleCreateAccount}

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Edit3, KeyRound, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
+import { Cloud, Edit3, KeyRound, LogOut, MailPlus, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
 import { UserAccount, UserRole } from '../types/erp';
 
 interface AccountSettingsModalProps {
@@ -7,6 +7,10 @@ interface AccountSettingsModalProps {
   currentUser: UserAccount;
   accounts: UserAccount[];
   hasSystemData?: boolean;
+  firebaseUserEmail?: string | null;
+  memberEmails?: string[];
+  onGoogleSignOut?: () => void;
+  onUpdateMemberEmails?: (emails: string[]) => Promise<{ ok: true } | { ok: false; error: string }>;
   onClose: () => void;
   onChangePin: (
     targetUserId: string,
@@ -32,6 +36,10 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   currentUser,
   accounts,
   hasSystemData = true,
+  firebaseUserEmail,
+  memberEmails = [],
+  onGoogleSignOut,
+  onUpdateMemberEmails,
   onClose,
   onChangePin,
   onCreateAccount,
@@ -65,6 +73,13 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const [editAccRole, setEditAccRole] = useState<UserRole>('Thành viên');
   const [editAccPin, setEditAccPin] = useState('');
   const [deleteAccTarget, setDeleteAccTarget] = useState<UserAccount | null>(null);
+
+  // Admin: multi-device Google email sharing
+  const [newSyncEmail, setNewSyncEmail] = useState('');
+  const [syncEmailBusy, setSyncEmailBusy] = useState(false);
+  const [syncEmailMsg, setSyncEmailMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
+    null
+  );
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -188,16 +203,36 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
             <p className="mt-0.5 text-xs text-[#57605E]">
               Đang đăng nhập: <strong className="text-[#1A1F1E]">{currentUser.name}</strong> ·{' '}
               {currentUser.role === 'Admin' ? 'Admin / Quản lý' : 'Thành viên'}
+              {firebaseUserEmail ? (
+                <>
+                  {' · '}Cloud: <strong className="text-[#0D4F43]">{firebaseUserEmail}</strong>
+                </>
+              ) : null}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Đóng cài đặt tài khoản"
-            className="rounded-lg p-1.5 text-[#57605E] transition-colors hover:bg-[#F3EFE6] hover:text-[#1A1F1E]"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onGoogleSignOut && firebaseUserEmail && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onGoogleSignOut();
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#A63429] hover:bg-[#A63429]/5"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Đổi Google
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Đóng cài đặt tài khoản"
+              className="rounded-lg p-1.5 text-[#57605E] transition-colors hover:bg-[#F3EFE6] hover:text-[#1A1F1E]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Section 1: Đổi mật khẩu / mã PIN cá nhân */}
@@ -605,6 +640,110 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 </button>
               </div>
             </form>
+
+            {onUpdateMemberEmails && (
+              <div className="mt-6 border-t border-[#ECE7DD] pt-5">
+                <h4 className="flex items-center gap-1.5 text-xs font-semibold text-[#1A1F1E]">
+                  <Cloud className="h-3.5 w-3.5 text-[#0D4F43]" />
+                  Email Google đồng bộ đa thiết bị (Cloud Firestore)
+                </h4>
+                <p className="mt-1 text-[11px] text-[#57605E]">
+                  Các thiết bị đăng nhập bằng email Google trong danh sách dưới đây sẽ đồng bộ toàn bộ dữ liệu theo thời gian thực qua <code className="font-mono">onSnapshot</code>.
+                </p>
+
+                {syncEmailMsg && (
+                  <div
+                    role="status"
+                    className={`mt-2 rounded-lg border px-3 py-2 text-xs font-medium ${
+                      syncEmailMsg.type === 'error'
+                        ? 'border-[#A63429]/30 bg-[#A63429]/5 text-[#A63429]'
+                        : 'border-[#0D4F43]/30 bg-[#0D4F43]/10 text-[#0D4F43]'
+                    }`}
+                  >
+                    {syncEmailMsg.text}
+                  </div>
+                )}
+
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  {memberEmails.map((em) => {
+                    const isPrimary = em === 'hangan269@gmail.com' || em === firebaseUserEmail?.toLowerCase();
+                    return (
+                      <div
+                        key={em}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-2.5 py-1 text-xs text-[#1A1F1E]"
+                      >
+                        <span className="font-mono">{em}</span>
+                        {!isPrimary && (
+                          <button
+                            type="button"
+                            disabled={syncEmailBusy}
+                            aria-label={`Gỡ email ${em}`}
+                            onClick={async () => {
+                              setSyncEmailBusy(true);
+                              setSyncEmailMsg(null);
+                              const res = await onUpdateMemberEmails(
+                                memberEmails.filter((item) => item !== em)
+                              );
+                              setSyncEmailBusy(false);
+                              if (!res.ok) {
+                                setSyncEmailMsg({ type: 'error', text: res.error });
+                              } else {
+                                setSyncEmailMsg({ type: 'success', text: `Đã gỡ ${em} khỏi danh sách đồng bộ.` });
+                              }
+                            }}
+                            className="text-[#A63429] hover:opacity-75 disabled:opacity-40"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const clean = newSyncEmail.trim().toLowerCase();
+                    if (!clean || !clean.includes('@')) {
+                      setSyncEmailMsg({ type: 'error', text: 'Vui lòng nhập email Google hợp lệ.' });
+                      return;
+                    }
+                    if (memberEmails.includes(clean)) {
+                      setSyncEmailMsg({ type: 'error', text: 'Email này đã có trong danh sách đồng bộ.' });
+                      return;
+                    }
+                    setSyncEmailBusy(true);
+                    setSyncEmailMsg(null);
+                    const res = await onUpdateMemberEmails([...memberEmails, clean]);
+                    setSyncEmailBusy(false);
+                    if (!res.ok) {
+                      setSyncEmailMsg({ type: 'error', text: res.error });
+                    } else {
+                      setNewSyncEmail('');
+                      setSyncEmailMsg({ type: 'success', text: `Đã cấp quyền đồng bộ Firestore cho ${clean}.` });
+                    }
+                  }}
+                  className="mt-3 flex flex-wrap gap-2"
+                >
+                  <input
+                    type="email"
+                    value={newSyncEmail}
+                    onChange={(e) => setNewSyncEmail(e.target.value)}
+                    placeholder="Nhập Gmail thành viên khác (vd: giang@gmail.com)"
+                    className="min-w-[240px] flex-1 rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={syncEmailBusy}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#093B32] disabled:opacity-50"
+                  >
+                    <MailPlus className="h-3.5 w-3.5" />
+                    Thêm email đồng bộ
+                  </button>
+                </form>
+              </div>
+            )}
 
             {onRequestResetSystem && hasSystemData && (
               <div className="mt-6 border-t border-[#ECE7DD] pt-5">

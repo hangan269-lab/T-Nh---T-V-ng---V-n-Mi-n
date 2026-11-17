@@ -1,0 +1,460 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Hardened Primitives
+    // -------------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'hangan269@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isWorkspaceMemberResource(data) {
+      return isVerifiedUser() && (
+        data.ownerUid == request.auth.uid ||
+        (request.auth.token.email != null && request.auth.token.email in data.memberEmails)
+      );
+    }
+
+    function hasValidBaseMeta(data) {
+      return data.ownerUid is string &&
+        data.ownerUid.size() >= 1 &&
+        data.ownerUid.size() <= 128 &&
+        data.memberEmails is list &&
+        data.memberEmails.size() >= 1 &&
+        data.memberEmails.size() <= 20 &&
+        data.memberEmails[0] is string &&
+        data.memberEmails[0].size() >= 3 &&
+        data.memberEmails[0].size() <= 160 &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt is timestamp;
+    }
+
+    function hasValidCreateIdentity(data) {
+      return data.ownerUid == request.auth.uid &&
+        request.auth.token.email != null &&
+        request.auth.token.email in data.memberEmails &&
+        data.serverCreatedAt == request.time &&
+        data.serverUpdatedAt == request.time;
+    }
+
+    function hasValidUpdateIdentity() {
+      return incoming().ownerUid == existing().ownerUid &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().serverUpdatedAt == request.time;
+    }
+
+    function isOptString(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isValidStockMap(m) {
+      return m is map &&
+        m.keys().hasOnly(['S', 'M', 'L', 'Freesize']) &&
+        (!('S' in m) || (m.S is number && m.S >= -100000 && m.S <= 100000)) &&
+        (!('M' in m) || (m.M is number && m.M >= -100000 && m.M <= 100000)) &&
+        (!('L' in m) || (m.L is number && m.L >= -100000 && m.L <= 100000)) &&
+        (!('Freesize' in m) || (m.Freesize is number && m.Freesize >= -100000 && m.Freesize <= 100000));
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints (Anti-Update-Gap & Anti-Shadow-Field)
+    // -------------------------------------------------------------------------
+    function isValidSystemMeta(data) {
+      return data.keys().hasAll(['id', 'isSampleData', 'seeded', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'isSampleData', 'seeded', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.isSampleData is bool &&
+        data.seeded is bool &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'code', 'name', 'brand', 'costPrice', 'sellPrice', 'initialStock', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'code', 'name', 'brand', 'costPrice', 'sellPrice', 'initialStock', 'stockAdjustments', 'isArchived', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 40 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.brand in ['Tơ Nhã', 'Tơ Vương', 'Vân Miên'] &&
+        data.costPrice is number && data.costPrice >= 0 && data.costPrice <= 1000000000 &&
+        data.sellPrice is number && data.sellPrice >= 0 && data.sellPrice <= 1000000000 &&
+        isValidStockMap(data.initialStock) &&
+        (!('stockAdjustments' in data) || isValidStockMap(data.stockAdjustments)) &&
+        (!('isArchived' in data) || data.isArchived is bool) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidStockImport(data) {
+      return data.keys().hasAll(['id', 'date', 'productId', 'size', 'quantity', 'unitCost', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'date', 'productId', 'size', 'quantity', 'unitCost', 'note', 'enteredBy', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 20 &&
+        isValidId(data.productId) &&
+        data.size in ['S', 'M', 'L', 'Freesize'] &&
+        data.quantity is number && data.quantity >= 1 && data.quantity <= 100000 &&
+        data.unitCost is number && data.unitCost >= 0 && data.unitCost <= 1000000000 &&
+        isOptString(data, 'note', 500) &&
+        isOptString(data, 'enteredBy', 160) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'id', 'code', 'date', 'brand', 'customerName', 'customerPhone', 'shippingAddress',
+          'shippingMethod', 'shopShippingCost', 'shippingCostPayer', 'shippingStatus',
+          'weightGrams', 'items', 'shippingFee', 'note', 'paymentStatus', 'isCancelled',
+          'createdAt', 'createdBy', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'code', 'date', 'brand', 'customerName', 'customerPhone', 'shippingAddress',
+          'shippingMethod', 'shopShippingCost', 'shippingCostPayer', 'shippingStatus',
+          'weightGrams', 'items', 'shippingFee', 'note', 'paymentStatus', 'isCancelled',
+          'createdAt', 'createdBy', 'paymentConfirmedBy', 'paymentConfirmedAt',
+          'cancelledBy', 'cancelledAt', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 40 &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 20 &&
+        data.brand in ['Tơ Nhã', 'Tơ Vương', 'Vân Miên'] &&
+        data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 160 &&
+        data.customerPhone is string && data.customerPhone.size() >= 1 && data.customerPhone.size() <= 32 &&
+        data.shippingAddress is string && data.shippingAddress.size() >= 1 && data.shippingAddress.size() <= 500 &&
+        data.shippingMethod in ['Viettel Post', 'Ship nội thành', 'Khách tự lấy'] &&
+        data.shopShippingCost is number && data.shopShippingCost >= 0 && data.shopShippingCost <= 100000000 &&
+        data.shippingCostPayer is string && data.shippingCostPayer.size() <= 160 &&
+        data.shippingStatus in ['Chưa gửi', 'Đã lên đơn VTP', 'Đã giao'] &&
+        data.weightGrams is number && data.weightGrams >= 1 && data.weightGrams <= 1000000 &&
+        data.items is list && data.items.size() >= 1 && data.items.size() <= 30 &&
+        data.items[0] is map &&
+        data.items[0].keys().hasAll(['productId', 'productCode', 'productName', 'size', 'quantity', 'unitPrice']) &&
+        data.items[0].keys().hasOnly(['productId', 'productCode', 'productName', 'size', 'quantity', 'unitPrice']) &&
+        data.items[0].productId is string && data.items[0].productId.size() <= 128 &&
+        data.items[0].productCode is string && data.items[0].productCode.size() <= 40 &&
+        data.items[0].productName is string && data.items[0].productName.size() <= 160 &&
+        data.items[0].size in ['S', 'M', 'L', 'Freesize'] &&
+        data.items[0].quantity is number && data.items[0].quantity >= 1 &&
+        data.items[0].unitPrice is number && data.items[0].unitPrice >= 0 &&
+        data.shippingFee is number && data.shippingFee >= 0 && data.shippingFee <= 100000000 &&
+        data.note is string && data.note.size() <= 500 &&
+        data.paymentStatus in ['Chưa thanh toán', 'Đã thanh toán'] &&
+        data.isCancelled is bool &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.createdBy is string && data.createdBy.size() <= 160 &&
+        isOptString(data, 'paymentConfirmedBy', 160) &&
+        isOptString(data, 'paymentConfirmedAt', 64) &&
+        isOptString(data, 'cancelledBy', 160) &&
+        isOptString(data, 'cancelledAt', 64) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidShareholder(data) {
+      return data.keys().hasAll(['id', 'name', 'contribution', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'contribution', 'note', 'updatedBy', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.contribution is number && data.contribution >= 0 && data.contribution <= 100000000000 &&
+        isOptString(data, 'note', 500) &&
+        isOptString(data, 'updatedBy', 160) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['id', 'date', 'category', 'brandScope', 'detail', 'amount', 'paidBy', 'receiptNote', 'status', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'linkedOrderId', 'linkedImportId', 'date', 'category', 'brandScope', 'detail', 'amount', 'paidBy', 'receiptNote', 'status', 'enteredBy', 'updatedBy', 'updatedAt', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        (!('linkedOrderId' in data) || isValidId(data.linkedOrderId)) &&
+        (!('linkedImportId' in data) || isValidId(data.linkedImportId)) &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 20 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 80 &&
+        data.brandScope in ['Tơ Nhã', 'Tơ Vương', 'Vân Miên', 'Dùng chung'] &&
+        data.detail is string && data.detail.size() >= 1 && data.detail.size() <= 500 &&
+        data.amount is number && data.amount >= 0 && data.amount <= 100000000000 &&
+        data.paidBy is string && data.paidBy.size() >= 1 && data.paidBy.size() <= 160 &&
+        data.receiptNote is string && data.receiptNote.size() <= 500 &&
+        data.status in ['Chưa', 'Hoàn thiện'] &&
+        isOptString(data, 'enteredBy', 160) &&
+        isOptString(data, 'updatedBy', 160) &&
+        isOptString(data, 'updatedAt', 64) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidBudgetItem(data) {
+      return data.keys().hasAll(['id', 'category', 'detail', 'quantity', 'estimatedUnitPrice', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'category', 'detail', 'quantity', 'estimatedUnitPrice', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 80 &&
+        data.detail is string && data.detail.size() >= 1 && data.detail.size() <= 500 &&
+        data.quantity is number && data.quantity >= 1 && data.quantity <= 1000000 &&
+        data.estimatedUnitPrice is number && data.estimatedUnitPrice >= 0 && data.estimatedUnitPrice <= 100000000000 &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['id', 'name', 'username', 'role', 'pin', 'createdAt', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'username', 'role', 'pin', 'createdAt', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 64 &&
+        data.role in ['Admin', 'Thành viên'] &&
+        data.pin is string && data.pin.size() >= 4 && data.pin.size() <= 32 &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'actorId', 'actorName', 'category', 'action', 'detail', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'timestamp', 'actorId', 'actorName', 'category', 'action', 'detail', 'oldValue', 'newValue', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.timestamp is string && data.timestamp.size() <= 64 &&
+        data.actorId is string && data.actorId.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 160 &&
+        data.category in ['Đơn hàng', 'Tài chính', 'Kho hàng', 'Tài khoản'] &&
+        data.action is string && data.action.size() >= 1 && data.action.size() <= 160 &&
+        data.detail is string && data.detail.size() >= 1 && data.detail.size() <= 500 &&
+        isOptString(data, 'oldValue', 500) &&
+        isOptString(data, 'newValue', 500) &&
+        hasValidBaseMeta(data);
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Match Rules
+    // -------------------------------------------------------------------------
+    match /admins/{userId} {
+      allow get: if isVerifiedUser() && (isBootstrappedAdmin() || request.auth.uid == userId);
+      allow list: if false;
+      allow create: if isBootstrappedAdmin() &&
+        isValidId(userId) &&
+        userId == request.auth.uid &&
+        incoming().keys().hasAll(['email', 'role', 'serverCreatedAt']) &&
+        incoming().keys().hasOnly(['email', 'role', 'serverCreatedAt']) &&
+        incoming().email == request.auth.token.email &&
+        incoming().role == 'Admin' &&
+        incoming().serverCreatedAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /system/{docId} {
+      allow get: if isValidId(docId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(docId) &&
+        isValidSystemMeta(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(docId) &&
+        isValidSystemMeta(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['isSampleData', 'seeded', 'serverUpdatedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(docId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['code', 'name', 'brand', 'costPrice', 'sellPrice', 'initialStock', 'stockAdjustments', 'serverUpdatedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(productId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /stockImports/{importId} {
+      allow get: if isValidId(importId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(importId) &&
+        isValidStockImport(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(importId) &&
+        isValidStockImport(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['date', 'productId', 'size', 'quantity', 'unitCost', 'note', 'serverUpdatedAt'])
+        );
+      allow delete: if isValidId(importId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          (
+            !existing().isCancelled && (
+              // Action: Confirm payment
+              incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'paymentConfirmedBy', 'paymentConfirmedAt', 'serverUpdatedAt']) ||
+              // Action: Shipping update
+              incoming().diff(existing()).affectedKeys().hasOnly(['shippingAddress', 'shippingMethod', 'shopShippingCost', 'shippingCostPayer', 'shippingStatus', 'weightGrams', 'serverUpdatedAt']) ||
+              // Action: Cancel order (terminal lock)
+              (incoming().isCancelled == true && incoming().diff(existing()).affectedKeys().hasOnly(['isCancelled', 'cancelledBy', 'cancelledAt', 'serverUpdatedAt'])) ||
+              // Action: Full order edit
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'date', 'brand', 'customerName', 'customerPhone', 'shippingAddress',
+                'shippingMethod', 'shopShippingCost', 'shippingCostPayer', 'shippingStatus',
+                'weightGrams', 'items', 'shippingFee', 'note', 'paymentStatus',
+                'paymentConfirmedBy', 'paymentConfirmedAt', 'serverUpdatedAt'
+              ])
+            )
+          )
+        );
+      allow delete: if isValidId(orderId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /shareholders/{shareholderId} {
+      allow get: if isValidId(shareholderId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(shareholderId) &&
+        isValidShareholder(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(shareholderId) &&
+        isValidShareholder(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'contribution', 'note', 'updatedBy', 'serverUpdatedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(shareholderId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /expenses/{expenseId} {
+      allow get: if isValidId(expenseId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(expenseId) &&
+        isValidExpense(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'date', 'category', 'brandScope', 'detail', 'amount', 'paidBy',
+            'receiptNote', 'status', 'updatedBy', 'updatedAt', 'serverUpdatedAt'
+          ])
+        );
+      allow delete: if isValidId(expenseId) &&
+        isWorkspaceMemberResource(existing()) &&
+        (isAdmin() || ('linkedOrderId' in existing()) || ('linkedImportId' in existing()));
+    }
+
+    match /budgetItems/{budgetId} {
+      allow get: if isValidId(budgetId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(budgetId) &&
+        isValidBudgetItem(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isVerifiedUser() &&
+        isValidId(budgetId) &&
+        isValidBudgetItem(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['category', 'detail', 'quantity', 'estimatedUnitPrice', 'serverUpdatedAt'])
+        );
+      allow delete: if isValidId(budgetId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /accounts/{accountId} {
+      allow get: if isValidId(accountId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(accountId) &&
+        isValidUserAccount(incoming()) &&
+        hasValidCreateIdentity(incoming()) &&
+        (isAdmin() || incoming().role == 'Thành viên');
+      allow update: if isVerifiedUser() &&
+        isValidId(accountId) &&
+        isValidUserAccount(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        (
+          isAdmin() ||
+          (
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['pin', 'serverUpdatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(accountId) && isWorkspaceMemberResource(existing());
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isWorkspaceMemberResource(existing());
+      allow list: if isWorkspaceMemberResource(existing());
+      allow create: if isVerifiedUser() &&
+        isValidId(logId) &&
+        isValidAuditLog(incoming()) &&
+        hasValidCreateIdentity(incoming());
+      allow update: if isAdmin() &&
+        isValidId(logId) &&
+        isValidAuditLog(incoming()) &&
+        isWorkspaceMemberResource(existing()) &&
+        hasValidUpdateIdentity() &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['memberEmails', 'serverUpdatedAt']);
+      allow delete: if isAdmin() && isValidId(logId) && isWorkspaceMemberResource(existing());
+    }
+  }
+}

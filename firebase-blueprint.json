@@ -1,0 +1,255 @@
+{
+  "entities": {
+    "AdminMarker": {
+      "title": "AdminMarker",
+      "description": "Bootstrapped Firebase admin record keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["Admin"] },
+        "serverCreatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "serverCreatedAt"]
+    },
+    "SystemMeta": {
+      "title": "SystemMeta",
+      "description": "Workspace initialization status and authorized member email list.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "isSampleData": { "type": "boolean" },
+        "seeded": { "type": "boolean" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array", "description": "Authorized Google emails (max 20)" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "isSampleData", "seeded", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Product catalog item with brand, cost/sell price, initial stock, and adjustments.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "code": { "type": "string", "maxLength": 40 },
+        "name": { "type": "string", "maxLength": 160 },
+        "brand": { "type": "string", "enum": ["Tơ Nhã", "Tơ Vương", "Vân Miên"] },
+        "costPrice": { "type": "number" },
+        "sellPrice": { "type": "number" },
+        "initialStock": { "type": "object" },
+        "stockAdjustments": { "type": "object" },
+        "isArchived": { "type": "boolean" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "code", "name", "brand", "costPrice", "sellPrice", "initialStock", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "StockImport": {
+      "title": "StockImport",
+      "description": "Inventory import transaction for a specific product and size.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 20 },
+        "productId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "size": { "type": "string", "enum": ["S", "M", "L", "Freesize"] },
+        "quantity": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "note": { "type": "string", "maxLength": 500 },
+        "enteredBy": { "type": "string", "maxLength": 160 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "date", "productId", "size", "quantity", "unitCost", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer sales order with items, shipping details, COD/payment status, and audit attribution.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "code": { "type": "string", "maxLength": 40 },
+        "date": { "type": "string", "maxLength": 20 },
+        "brand": { "type": "string", "enum": ["Tơ Nhã", "Tơ Vương", "Vân Miên"] },
+        "customerName": { "type": "string", "maxLength": 160 },
+        "customerPhone": { "type": "string", "maxLength": 32 },
+        "shippingAddress": { "type": "string", "maxLength": 500 },
+        "shippingMethod": { "type": "string", "enum": ["Viettel Post", "Ship nội thành", "Khách tự lấy"] },
+        "shopShippingCost": { "type": "number" },
+        "shippingCostPayer": { "type": "string", "maxLength": 160 },
+        "shippingStatus": { "type": "string", "enum": ["Chưa gửi", "Đã lên đơn VTP", "Đã giao"] },
+        "weightGrams": { "type": "number" },
+        "items": { "type": "array", "description": "Order line items (1..30)" },
+        "shippingFee": { "type": "number" },
+        "note": { "type": "string", "maxLength": 500 },
+        "paymentStatus": { "type": "string", "enum": ["Chưa thanh toán", "Đã thanh toán"] },
+        "isCancelled": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "createdBy": { "type": "string", "maxLength": 160 },
+        "paymentConfirmedBy": { "type": "string", "maxLength": 160 },
+        "paymentConfirmedAt": { "type": "string", "maxLength": 64 },
+        "cancelledBy": { "type": "string", "maxLength": 160 },
+        "cancelledAt": { "type": "string", "maxLength": 64 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "code", "date", "brand", "customerName", "customerPhone", "shippingAddress",
+        "shippingMethod", "shopShippingCost", "shippingCostPayer", "shippingStatus",
+        "weightGrams", "items", "shippingFee", "note", "paymentStatus", "isCancelled",
+        "createdAt", "createdBy", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"
+      ]
+    },
+    "Shareholder": {
+      "title": "Shareholder",
+      "description": "Studio capital contributor / shareholder record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 160 },
+        "contribution": { "type": "number" },
+        "note": { "type": "string", "maxLength": 500 },
+        "updatedBy": { "type": "string", "maxLength": 160 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "contribution", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Operating or shipping expense entry synchronized with orders and cash fund.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "linkedOrderId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "linkedImportId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "date": { "type": "string", "maxLength": 20 },
+        "category": { "type": "string", "maxLength": 80 },
+        "brandScope": { "type": "string", "enum": ["Tơ Nhã", "Tơ Vương", "Vân Miên", "Dùng chung"] },
+        "detail": { "type": "string", "maxLength": 500 },
+        "amount": { "type": "number" },
+        "paidBy": { "type": "string", "maxLength": 160 },
+        "receiptNote": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["Chưa", "Hoàn thiện"] },
+        "enteredBy": { "type": "string", "maxLength": 160 },
+        "updatedBy": { "type": "string", "maxLength": 160 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "date", "category", "brandScope", "detail", "amount", "paidBy",
+        "receiptNote", "status", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"
+      ]
+    },
+    "BudgetItem": {
+      "title": "BudgetItem",
+      "description": "Planned inventory or marketing budget line item.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "category": { "type": "string", "maxLength": 80 },
+        "detail": { "type": "string", "maxLength": 500 },
+        "quantity": { "type": "number" },
+        "estimatedUnitPrice": { "type": "number" },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "category", "detail", "quantity", "estimatedUnitPrice", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Team operator profile with role and POS/ERP PIN.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 160 },
+        "username": { "type": "string", "maxLength": 64 },
+        "role": { "type": "string", "enum": ["Admin", "Thành viên"] },
+        "pin": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "username", "role", "pin", "createdAt", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "AuditLogEntry": {
+      "title": "AuditLogEntry",
+      "description": "Immutable audit trail record for orders, inventory, finance, and accounts.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "enum": ["Đơn hàng", "Tài chính", "Kho hàng", "Tài khoản"] },
+        "action": { "type": "string", "maxLength": 160 },
+        "detail": { "type": "string", "maxLength": 500 },
+        "oldValue": { "type": "string", "maxLength": 500 },
+        "newValue": { "type": "string", "maxLength": 500 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "memberEmails": { "type": "array" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "timestamp", "actorId", "actorName", "category", "action", "detail", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminMarker" },
+      "description": "Bootstrapped Firebase admin marker documents."
+    },
+    "/system/{docId}": {
+      "schema": { "$ref": "#/entities/SystemMeta" },
+      "description": "Studio workspace initialization metadata and sample-data status."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Product catalog and stock adjustment records synced in real time."
+    },
+    "/stockImports/{importId}": {
+      "schema": { "$ref": "#/entities/StockImport" },
+      "description": "Stock import batches synced in real time."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Customer sales orders synced in real time."
+    },
+    "/shareholders/{shareholderId}": {
+      "schema": { "$ref": "#/entities/Shareholder" },
+      "description": "Shareholder capital contributions synced in real time."
+    },
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Operating and shipping expenses synced in real time."
+    },
+    "/budgetItems/{budgetId}": {
+      "schema": { "$ref": "#/entities/BudgetItem" },
+      "description": "Planned budget items synced in real time."
+    },
+    "/accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Team member POS/ERP accounts synced in real time."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLogEntry" },
+      "description": "Audit log entries synced in real time."
+    }
+  }
+}
