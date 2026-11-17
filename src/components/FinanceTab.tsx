@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Clock, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Clock, Edit3, Plus, Trash2, X } from 'lucide-react';
 import {
   ALL_BRANDS,
   AppState,
@@ -9,9 +9,11 @@ import {
   ExpenseBrandScope,
   ExpenseStatus,
   Shareholder,
+  UserAccount,
 } from '../types/erp';
 import {
   computeFundSummary,
+  ExpenseUpdatePatch,
   formatDateVN,
   formatVND,
   getTodayISO,
@@ -19,28 +21,42 @@ import {
 
 interface FinanceTabProps {
   state: AppState;
+  currentUser: UserAccount;
   onAddShareholder: (sh: Omit<Shareholder, 'id'>) => void;
+  onUpdateShareholder: (
+    id: string,
+    patch: Partial<Pick<Shareholder, 'name' | 'contribution' | 'note'>>
+  ) => void;
   onDeleteShareholder: (id: string) => void;
-  onAddExpense: (exp: Omit<Expense, 'id'>) => void;
+  onAddExpense: (exp: Omit<Expense, 'id' | 'enteredBy'>) => void;
+  onUpdateExpense: (id: string, patch: ExpenseUpdatePatch) => void;
   onToggleExpenseStatus: (id: string) => void;
   onDeleteExpense: (id: string) => void;
 }
 
 export const FinanceTab: React.FC<FinanceTabProps> = ({
   state,
+  currentUser,
   onAddShareholder,
+  onUpdateShareholder,
   onDeleteShareholder,
   onAddExpense,
+  onUpdateExpense,
   onToggleExpenseStatus,
   onDeleteExpense,
 }) => {
+  const isAdmin = currentUser.role === 'Admin';
   const fund = computeFundSummary(state.shareholders, state.expenses);
 
-  // Shareholder form
+  // Shareholder form & inline edit
   const [showShareholderForm, setShowShareholderForm] = useState(false);
   const [shName, setShName] = useState('');
   const [shContribution, setShContribution] = useState('');
   const [shNote, setShNote] = useState('');
+  const [editingShId, setEditingShId] = useState<string | null>(null);
+  const [editShName, setEditShName] = useState('');
+  const [editShContribution, setEditShContribution] = useState('');
+  const [editShNote, setEditShNote] = useState('');
 
   // Expense form
   const [expDate, setExpDate] = useState(getTodayISO());
@@ -51,6 +67,16 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [expPaidBy, setExpPaidBy] = useState<string>(DEFAULT_PAYERS[0]);
   const [expReceipt, setExpReceipt] = useState('');
   const [expStatus, setExpStatus] = useState<ExpenseStatus>(ExpenseStatus.PENDING);
+
+  // Expense inline edit
+  const [editingExpId, setEditingExpId] = useState<string | null>(null);
+  const [editExpDate, setEditExpDate] = useState('');
+  const [editExpCategory, setEditExpCategory] = useState('');
+  const [editExpScope, setEditExpScope] = useState<ExpenseBrandScope>('Dùng chung');
+  const [editExpDetail, setEditExpDetail] = useState('');
+  const [editExpAmount, setEditExpAmount] = useState('');
+  const [editExpPaidBy, setEditExpPaidBy] = useState('');
+  const [editExpReceipt, setEditExpReceipt] = useState('');
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'all' | ExpenseStatus>('all');
@@ -96,6 +122,50 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
     setExpDetail('');
     setExpAmount('');
     setExpReceipt('');
+  };
+
+  const openEditShareholder = (sh: Shareholder) => {
+    setEditingShId(sh.id);
+    setEditShName(sh.name);
+    setEditShContribution(String(sh.contribution));
+    setEditShNote(sh.note || '');
+  };
+
+  const saveEditShareholder = (id: string) => {
+    const amount = Number(editShContribution);
+    if (!editShName.trim() || !Number.isFinite(amount) || amount < 0) return;
+    onUpdateShareholder(id, {
+      name: editShName.trim(),
+      contribution: Math.round(amount),
+      note: editShNote.trim(),
+    });
+    setEditingShId(null);
+  };
+
+  const openEditExpense = (exp: Expense) => {
+    setEditingExpId(exp.id);
+    setEditExpDate(exp.date);
+    setEditExpCategory(exp.category);
+    setEditExpScope(exp.brandScope);
+    setEditExpDetail(exp.detail);
+    setEditExpAmount(String(exp.amount));
+    setEditExpPaidBy(exp.paidBy);
+    setEditExpReceipt(exp.receiptNote || '');
+  };
+
+  const saveEditExpense = (id: string) => {
+    const amount = Number(editExpAmount);
+    if (!editExpDetail.trim() || !Number.isFinite(amount) || amount < 0) return;
+    onUpdateExpense(id, {
+      date: editExpDate,
+      category: editExpCategory,
+      brandScope: editExpScope,
+      detail: editExpDetail.trim(),
+      amount: Math.round(amount),
+      paidBy: editExpPaidBy,
+      receiptNote: editExpReceipt.trim(),
+    });
+    setEditingExpId(null);
   };
 
   return (
@@ -226,14 +296,14 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
         )}
 
         <div className="mt-4 overflow-x-auto">
-          <table className="w-full min-w-[540px] text-left text-sm">
+          <table className="w-full min-w-[600px] text-left text-sm">
             <thead>
               <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
                 <th className="py-3 pr-4">Cổ đông</th>
                 <th className="py-3 px-4">Ghi chú</th>
                 <th className="py-3 px-4 text-right">Tỷ lệ</th>
                 <th className="py-3 px-4 text-right">Số tiền góp</th>
-                <th className="py-3 pl-4 text-right">Xóa</th>
+                <th className="py-3 pl-4 text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#ECE7DD]">
@@ -242,27 +312,123 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                   fund.totalCapital > 0
                     ? ((sh.contribution / fund.totalCapital) * 100).toFixed(1)
                     : '0.0';
+                const isEditingSh = editingShId === sh.id;
                 return (
-                  <tr key={sh.id} className="hover:bg-[#FAF8F4]">
-                    <td className="py-3 pr-4 font-medium text-[#1A1F1E]">{sh.name}</td>
-                    <td className="py-3 px-4 text-xs text-[#57605E]">{sh.note || '—'}</td>
-                    <td className="py-3 px-4 text-right font-mono text-xs text-[#57605E] tabular-nums">
-                      {ratio}%
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums">
-                      {formatVND(sh.contribution)}
-                    </td>
-                    <td className="py-3 pl-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onDeleteShareholder(sh.id)}
-                        aria-label={`Xóa cổ đông ${sh.name}`}
-                        className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
+                  <React.Fragment key={sh.id}>
+                    <tr className="hover:bg-[#FAF8F4]">
+                      <td className="py-3 pr-4 font-medium text-[#1A1F1E]">
+                        <div>{sh.name}</div>
+                        {sh.updatedBy && (
+                          <div className="text-[11px] font-normal text-[#57605E]">
+                            Cập nhật bởi: {sh.updatedBy}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-xs text-[#57605E]">{sh.note || '—'}</td>
+                      <td className="py-3 px-4 text-right font-mono text-xs text-[#57605E] tabular-nums">
+                        {ratio}%
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums">
+                        {formatVND(sh.contribution)}
+                      </td>
+                      <td className="py-3 pl-4 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              isEditingSh ? setEditingShId(null) : openEditShareholder(sh)
+                            }
+                            aria-label={`Sửa vốn góp cổ đông ${sh.name}`}
+                            className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
+                          >
+                            <Edit3 className="h-3 w-3" />
+                            Sửa
+                          </button>
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => onDeleteShareholder(sh.id)}
+                              aria-label={`Xóa vĩnh viễn cổ đông ${sh.name}`}
+                              className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {isEditingSh && (
+                      <tr className="bg-[#FAF8F4]">
+                        <td colSpan={5} className="px-4 py-3">
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:items-end">
+                            <div>
+                              <label
+                                htmlFor={`edit-sh-name-${sh.id}`}
+                                className="block text-xs font-medium text-[#57605E]"
+                              >
+                                Tên cổ đông
+                              </label>
+                              <input
+                                id={`edit-sh-name-${sh.id}`}
+                                type="text"
+                                value={editShName}
+                                onChange={(e) => setEditShName(e.target.value)}
+                                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label
+                                htmlFor={`edit-sh-amount-${sh.id}`}
+                                className="block text-xs font-medium text-[#57605E]"
+                              >
+                                Số tiền góp (đ)
+                              </label>
+                              <input
+                                id={`edit-sh-amount-${sh.id}`}
+                                type="number"
+                                min={0}
+                                step={100000}
+                                value={editShContribution}
+                                onChange={(e) => setEditShContribution(e.target.value)}
+                                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label
+                                htmlFor={`edit-sh-note-${sh.id}`}
+                                className="block text-xs font-medium text-[#57605E]"
+                              >
+                                Ghi chú
+                              </label>
+                              <input
+                                id={`edit-sh-note-${sh.id}`}
+                                type="text"
+                                value={editShNote}
+                                onChange={(e) => setEditShNote(e.target.value)}
+                                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                              />
+                            </div>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingShId(null)}
+                                className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#57605E] hover:bg-[#F3EFE6]"
+                              >
+                                Hủy
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => saveEditShareholder(sh.id)}
+                                className="rounded-lg bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#093B32]"
+                              >
+                                Lưu thay đổi
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -288,7 +454,8 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
             Sổ chi tiết các khoản chi vận hành
           </h2>
           <p className="mt-0.5 text-xs text-[#57605E]">
-            Nhấn trực tiếp vào cột Tình trạng để chuyển nhanh giữa "Chưa" và "Hoàn thiện".
+            Nhấn Tình trạng để đổi nhanh "Chưa" / "Hoàn thiện". Mọi thao tác sửa đều lưu vết cũ → mới trong Lịch sử thao tác.
+            {!isAdmin && ' (Chỉ Admin mới có quyền xóa vĩnh viễn giao dịch tài chính.)'}
           </p>
         </div>
 
@@ -297,7 +464,12 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
           onSubmit={handleExpenseSubmit}
           className="mt-5 rounded-xl border border-[#ECE7DD] bg-[#FAF8F4] p-4"
         >
-          <div className="text-xs font-semibold text-[#1A1F1E]">Thêm khoản chi mới</div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-[#1A1F1E]">Thêm khoản chi mới</span>
+            <span className="text-xs text-[#57605E]">
+              Người nhập liệu: <strong className="text-[#0D4F43]">{currentUser.name}</strong>
+            </span>
+          </div>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label htmlFor="exp-date" className="block text-xs font-medium text-[#57605E]">
@@ -488,73 +660,254 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-sm">
+            <table className="w-full min-w-[920px] text-left text-sm">
               <thead>
                 <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
                   <th className="py-3 pr-3">Ngày</th>
-                  <th className="py-3 px-3">Hạng mục & Nhánh</th>
+                  <th className="py-3 px-3">Hạng mục &amp; Nhánh</th>
                   <th className="py-3 px-3">Chi tiết</th>
-                  <th className="py-3 px-3">Người ứng chi</th>
+                  <th className="py-3 px-3">Ứng chi &amp; Nhập liệu</th>
                   <th className="py-3 px-3 text-right">Số tiền</th>
                   <th className="py-3 px-3">Tình trạng</th>
-                  <th className="py-3 pl-3 text-right">Xóa</th>
+                  <th className="py-3 pl-3 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#ECE7DD]">
                 {filteredExpenses.map((exp) => {
                   const isDone = exp.status === ExpenseStatus.COMPLETED;
+                  const isEditingExp = editingExpId === exp.id;
                   return (
-                    <tr key={exp.id} className="hover:bg-[#FAF8F4]">
-                      <td className="py-3 pr-3 font-mono text-xs text-[#57605E] tabular-nums">
-                        {formatDateVN(exp.date)}
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="font-medium text-[#1A1F1E]">{exp.category}</div>
-                        <div className="text-xs text-[#57605E]">{exp.brandScope}</div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="text-[#1A1F1E]">{exp.detail}</div>
-                        {(exp.receiptNote || exp.linkedOrderId) && (
-                          <div className="text-xs text-[#57605E]">
-                            {exp.receiptNote ? `HĐ: ${exp.receiptNote}` : ''}
-                            {exp.linkedOrderId ? ' · Đồng bộ tự động từ Đơn hàng' : ''}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3 px-3 text-xs font-medium text-[#1A1F1E]">{exp.paidBy}</td>
-                      <td className="py-3 px-3 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums whitespace-nowrap">
-                        {formatVND(exp.amount)}
-                      </td>
-                      <td className="py-3 px-3">
-                        <button
-                          type="button"
-                          onClick={() => onToggleExpenseStatus(exp.id)}
-                          aria-label={`Đổi tình trạng khoản chi "${exp.detail}"`}
-                          className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                            isDone
-                              ? 'bg-[#0D4F43]/10 text-[#0D4F43] hover:bg-[#0D4F43]/20'
-                              : 'border border-[#B45309]/40 bg-[#FEF3C7]/70 text-[#92400E] hover:bg-[#FDE68A]'
-                          }`}
-                        >
-                          {isDone ? (
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          ) : (
-                            <Clock className="h-3.5 w-3.5" />
+                    <React.Fragment key={exp.id}>
+                      <tr className="hover:bg-[#FAF8F4]">
+                        <td className="py-3 pr-3 font-mono text-xs text-[#57605E] tabular-nums whitespace-nowrap">
+                          {formatDateVN(exp.date)}
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="font-medium text-[#1A1F1E]">{exp.category}</div>
+                          <div className="text-xs text-[#57605E]">{exp.brandScope}</div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="text-[#1A1F1E]">{exp.detail}</div>
+                          {(exp.receiptNote || exp.linkedOrderId) && (
+                            <div className="text-xs text-[#57605E]">
+                              {exp.receiptNote ? `HĐ: ${exp.receiptNote}` : ''}
+                              {exp.linkedOrderId ? ' · Đồng bộ tự động từ Đơn hàng' : ''}
+                            </div>
                           )}
-                          {exp.status}
-                        </button>
-                      </td>
-                      <td className="py-3 pl-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => onDeleteExpense(exp.id)}
-                          aria-label={`Xóa khoản chi ${exp.detail}`}
-                          className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="py-3 px-3 text-xs">
+                          <div className="font-medium text-[#1A1F1E]">{exp.paidBy}</div>
+                          <div className="text-[11px] text-[#57605E]">
+                            Nhập: {exp.enteredBy || 'Hệ thống'}
+                            {exp.updatedBy ? ` · Sửa: ${exp.updatedBy}` : ''}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums whitespace-nowrap">
+                          {formatVND(exp.amount)}
+                        </td>
+                        <td className="py-3 px-3">
+                          <button
+                            type="button"
+                            onClick={() => onToggleExpenseStatus(exp.id)}
+                            aria-label={`Đổi tình trạng khoản chi "${exp.detail}"`}
+                            className={`inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                              isDone
+                                ? 'bg-[#0D4F43]/10 text-[#0D4F43] hover:bg-[#0D4F43]/20'
+                                : 'border border-[#B45309]/40 bg-[#FEF3C7]/70 text-[#92400E] hover:bg-[#FDE68A]'
+                            }`}
+                          >
+                            {isDone ? (
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                            ) : (
+                              <Clock className="h-3.5 w-3.5" />
+                            )}
+                            {exp.status}
+                          </button>
+                        </td>
+                        <td className="py-3 pl-3 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                isEditingExp ? setEditingExpId(null) : openEditExpense(exp)
+                              }
+                              aria-label={`Sửa khoản chi ${exp.detail}`}
+                              className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              Sửa
+                            </button>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteExpense(exp.id)}
+                                aria-label={`Xóa vĩnh viễn khoản chi ${exp.detail}`}
+                                className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {isEditingExp && (
+                        <tr className="bg-[#FAF8F4]">
+                          <td colSpan={7} className="px-4 py-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6 sm:items-end">
+                              <div>
+                                <label
+                                  htmlFor={`edit-exp-date-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Ngày chi
+                                </label>
+                                <input
+                                  id={`edit-exp-date-${exp.id}`}
+                                  type="date"
+                                  value={editExpDate}
+                                  onChange={(e) => setEditExpDate(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div>
+                                <label
+                                  htmlFor={`edit-exp-cat-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Hạng mục
+                                </label>
+                                <select
+                                  id={`edit-exp-cat-${exp.id}`}
+                                  value={editExpCategory}
+                                  onChange={(e) => setEditExpCategory(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                >
+                                  {EXPENSE_CATEGORIES.map((c) => (
+                                    <option key={c} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label
+                                  htmlFor={`edit-exp-scope-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Nhánh
+                                </label>
+                                <select
+                                  id={`edit-exp-scope-${exp.id}`}
+                                  value={editExpScope}
+                                  onChange={(e) =>
+                                    setEditExpScope(e.target.value as ExpenseBrandScope)
+                                  }
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                >
+                                  <option value="Dùng chung">Dùng chung</option>
+                                  {ALL_BRANDS.map((b) => (
+                                    <option key={b} value={b}>
+                                      {b}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="lg:col-span-2">
+                                <label
+                                  htmlFor={`edit-exp-detail-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Chi tiết khoản chi
+                                </label>
+                                <input
+                                  id={`edit-exp-detail-${exp.id}`}
+                                  type="text"
+                                  value={editExpDetail}
+                                  onChange={(e) => setEditExpDetail(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div>
+                                <label
+                                  htmlFor={`edit-exp-amount-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Số tiền (đ)
+                                </label>
+                                <input
+                                  id={`edit-exp-amount-${exp.id}`}
+                                  type="number"
+                                  min={0}
+                                  step={1000}
+                                  value={editExpAmount}
+                                  onChange={(e) => setEditExpAmount(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div>
+                                <label
+                                  htmlFor={`edit-exp-payer-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Người ứng chi
+                                </label>
+                                <select
+                                  id={`edit-exp-payer-${exp.id}`}
+                                  value={editExpPaidBy}
+                                  onChange={(e) => setEditExpPaidBy(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                >
+                                  {DEFAULT_PAYERS.map((p) => (
+                                    <option key={p} value={p}>
+                                      {p}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="lg:col-span-3">
+                                <label
+                                  htmlFor={`edit-exp-receipt-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Hóa đơn / Ghi chú
+                                </label>
+                                <input
+                                  id={`edit-exp-receipt-${exp.id}`}
+                                  type="text"
+                                  value={editExpReceipt}
+                                  onChange={(e) => setEditExpReceipt(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="lg:col-span-2 flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingExpId(null)}
+                                  className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#57605E] hover:bg-[#F3EFE6]"
+                                >
+                                  Hủy
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => saveEditExpense(exp.id)}
+                                  className="rounded-lg bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#093B32] whitespace-nowrap"
+                                >
+                                  Lưu khoản chi
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

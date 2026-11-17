@@ -72,6 +72,31 @@ export const DEFAULT_PAYERS = [
   'Linh chi',
 ] as const;
 
+export type UserRole = 'Admin' | 'Thành viên';
+
+export interface UserAccount {
+  id: string;
+  name: string;
+  username: string;
+  role: UserRole;
+  pin: string;
+  createdAt: string;
+}
+
+export type AuditCategory = 'Đơn hàng' | 'Tài chính' | 'Kho hàng' | 'Tài khoản';
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string; // ISO string
+  actorId: string;
+  actorName: string;
+  category: AuditCategory;
+  action: string;
+  detail: string;
+  oldValue?: string;
+  newValue?: string;
+}
+
 export interface Product {
   id: string;
   code: string;
@@ -90,6 +115,7 @@ export interface StockImport {
   quantity: number;
   unitCost: number;
   note?: string;
+  enteredBy?: string;
 }
 
 export interface OrderItem {
@@ -120,6 +146,11 @@ export interface Order {
   paymentStatus: PaymentStatus;
   isCancelled: boolean;
   createdAt: string;
+  createdBy: string;
+  paymentConfirmedBy?: string;
+  paymentConfirmedAt?: string;
+  cancelledBy?: string;
+  cancelledAt?: string;
 }
 
 export interface Shareholder {
@@ -127,6 +158,7 @@ export interface Shareholder {
   name: string;
   contribution: number;
   note?: string;
+  updatedBy?: string;
 }
 
 export type ExpenseBrandScope = Brand | 'Dùng chung';
@@ -142,6 +174,9 @@ export interface Expense {
   paidBy: string;
   receiptNote: string;
   status: ExpenseStatus;
+  enteredBy?: string;
+  updatedBy?: string;
+  updatedAt?: string;
 }
 
 export interface BudgetItem {
@@ -159,5 +194,7 @@ export interface AppState {
   shareholders: Shareholder[];
   expenses: Expense[];
   budgetItems: BudgetItem[];
+  accounts: UserAccount[];
+  auditLogs: AuditLogEntry[];
   isSampleData: boolean;
 }

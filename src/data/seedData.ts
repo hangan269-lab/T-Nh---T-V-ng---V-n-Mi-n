@@ -5,17 +5,66 @@ import {
   PaymentStatus,
   ShippingMethod,
   ShippingStatus,
+  UserAccount,
 } from '../types/erp';
 import { getRelativeISO, getTodayISO } from '../utils/finance';
+
+export function createDefaultAccounts(): UserAccount[] {
+  const createdAt = '2026-11-01T08:00:00.000Z';
+  return [
+    {
+      id: 'acc_ngan',
+      name: 'Ngân',
+      username: 'ngan',
+      role: 'Admin',
+      pin: '1234',
+      createdAt,
+    },
+    {
+      id: 'acc_giang',
+      name: 'Giang',
+      username: 'giang',
+      role: 'Thành viên',
+      pin: '1234',
+      createdAt,
+    },
+    {
+      id: 'acc_hoa',
+      name: 'Hoa',
+      username: 'hoa',
+      role: 'Thành viên',
+      pin: '1234',
+      createdAt,
+    },
+    {
+      id: 'acc_phuong',
+      name: 'Phương',
+      username: 'phuong',
+      role: 'Thành viên',
+      pin: '1234',
+      createdAt,
+    },
+    {
+      id: 'acc_linh',
+      name: 'Linh',
+      username: 'linh',
+      role: 'Thành viên',
+      pin: '1234',
+      createdAt,
+    },
+  ];
+}
 
 export function createSeedState(baseDate: Date = new Date()): AppState {
   const today = getTodayISO(baseDate);
   const yesterday = getRelativeISO(-1, baseDate);
   const threeDaysAgo = getRelativeISO(-3, baseDate);
   const fiveDaysAgo = getRelativeISO(-5, baseDate);
+  const accounts = createDefaultAccounts();
 
   return {
     isSampleData: true,
+    accounts,
     products: [
       {
         id: 'prd_tn_01',
@@ -90,6 +139,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         quantity: 2,
         unitCost: 680000,
         note: 'Bổ sung đợt 1 xưởng may Hà Đông',
+        enteredBy: 'Ngân',
       },
       {
         id: 'imp_02',
@@ -99,6 +149,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         quantity: 4,
         unitCost: 220000,
         note: 'Nhập lô trà vụ Thu',
+        enteredBy: 'Linh',
       },
     ],
     orders: [
@@ -129,7 +180,10 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         note: 'Khách ghé thử và lấy trực tiếp tại tiệm',
         paymentStatus: PaymentStatus.PAID,
         isCancelled: false,
-        createdAt: `${today}T09:15:00.000Z`,
+        createdAt: `${today}T09:15:00`,
+        createdBy: 'Ngân',
+        paymentConfirmedBy: 'Ngân',
+        paymentConfirmedAt: `${today}T09:20:00`,
       },
       {
         id: 'ord_02',
@@ -166,7 +220,8 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         note: 'Giao hỏa tốc quận Hoàn Kiếm, thu COD',
         paymentStatus: PaymentStatus.UNPAID,
         isCancelled: false,
-        createdAt: `${today}T10:30:00.000Z`,
+        createdAt: `${today}T10:30:00`,
+        createdBy: 'Giang',
       },
       {
         id: 'ord_03',
@@ -195,7 +250,8 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         note: 'Khách đặt chụp ảnh cưới',
         paymentStatus: PaymentStatus.UNPAID,
         isCancelled: false,
-        createdAt: `${yesterday}T14:20:00.000Z`,
+        createdAt: `${yesterday}T14:20:00`,
+        createdBy: 'Hoa',
       },
       {
         id: 'ord_04',
@@ -224,7 +280,10 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         note: 'Đã chuyển khoản Techcombank',
         paymentStatus: PaymentStatus.PAID,
         isCancelled: false,
-        createdAt: `${threeDaysAgo}T16:45:00.000Z`,
+        createdAt: `${threeDaysAgo}T16:45:00`,
+        createdBy: 'Phương',
+        paymentConfirmedBy: 'Ngân',
+        paymentConfirmedAt: `${threeDaysAgo}T17:05:00`,
       },
     ],
     shareholders: [
@@ -245,6 +304,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Ngân chi',
         receiptNote: 'Cước VC đơn DH-0002',
         status: ExpenseStatus.COMPLETED,
+        enteredBy: 'Giang',
       },
       {
         id: 'exp_ship_ord_03',
@@ -257,6 +317,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Ngân chi',
         receiptNote: 'Cước VC đơn DH-0003',
         status: ExpenseStatus.COMPLETED,
+        enteredBy: 'Hoa',
       },
       {
         id: 'exp_ship_ord_04',
@@ -269,6 +330,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Giang chi',
         receiptNote: 'Cước VC đơn DH-0004',
         status: ExpenseStatus.COMPLETED,
+        enteredBy: 'Phương',
       },
       {
         id: 'exp_01',
@@ -280,6 +342,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Ngân chi',
         receiptNote: 'HĐ vải số 018',
         status: ExpenseStatus.COMPLETED,
+        enteredBy: 'Ngân',
       },
       {
         id: 'exp_02',
@@ -291,6 +354,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Giang chi',
         receiptNote: 'Xưởng in Hồng Hà',
         status: ExpenseStatus.COMPLETED,
+        enteredBy: 'Giang',
       },
       {
         id: 'exp_03',
@@ -302,6 +366,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Hoa thanh toán',
         receiptNote: 'Studio Phố Cổ',
         status: ExpenseStatus.COMPLETED,
+        enteredBy: 'Hoa',
       },
       {
         id: 'exp_04',
@@ -313,6 +378,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Phương chi',
         receiptNote: 'Tài khoản BM #02',
         status: ExpenseStatus.PENDING,
+        enteredBy: 'Phương',
       },
       {
         id: 'exp_05',
@@ -324,6 +390,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         paidBy: 'Linh chi',
         receiptNote: 'Chờ lấy hóa đơn đỏ',
         status: ExpenseStatus.PENDING,
+        enteredBy: 'Linh',
       },
     ],
     budgetItems: [
@@ -356,17 +423,66 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         estimatedUnitPrice: 18000,
       },
     ],
+    auditLogs: [
+      {
+        id: 'log_seed_05',
+        timestamp: `${today}T10:30:00`,
+        actorId: 'acc_giang',
+        actorName: 'Giang',
+        category: 'Đơn hàng',
+        action: 'Tạo đơn hàng',
+        detail: 'Giang đã tạo đơn hàng #DH-0002 (Khách: Trần Hoàng Bảo - 1.885.000đ)',
+      },
+      {
+        id: 'log_seed_04',
+        timestamp: `${today}T09:20:00`,
+        actorId: 'acc_ngan',
+        actorName: 'Ngân',
+        category: 'Đơn hàng',
+        action: 'Xác nhận thanh toán',
+        detail: 'Ngân đã xác nhận ĐÃ THANH TOÁN cho đơn #DH-0001 (Khách: Nguyễn Minh Châu - 1.450.000đ)',
+      },
+      {
+        id: 'log_seed_03',
+        timestamp: `${today}T09:15:00`,
+        actorId: 'acc_ngan',
+        actorName: 'Ngân',
+        category: 'Đơn hàng',
+        action: 'Tạo đơn hàng',
+        detail: 'Ngân đã tạo đơn hàng #DH-0001 (Khách: Nguyễn Minh Châu - 1.450.000đ)',
+      },
+      {
+        id: 'log_seed_02',
+        timestamp: `${yesterday}T14:20:00`,
+        actorId: 'acc_hoa',
+        actorName: 'Hoa',
+        category: 'Đơn hàng',
+        action: 'Tạo đơn hàng',
+        detail: 'Hoa đã tạo đơn hàng #DH-0003 (Khách: Lê Quang Hải - 1.630.000đ)',
+      },
+      {
+        id: 'log_seed_01',
+        timestamp: `${threeDaysAgo}T11:10:00`,
+        actorId: 'acc_linh',
+        actorName: 'Linh',
+        category: 'Kho hàng',
+        action: 'Nhập kho mới',
+        detail: 'Linh đã nhập kho +4 VM-01 · Hộp Trà Ô Long Phượng Hoàng (Freesize) · Đơn giá 220.000đ',
+      },
+    ],
   };
 }
 
-export function createEmptyState(): AppState {
+export function createEmptyState(existingAccounts?: UserAccount[]): AppState {
   return {
     isSampleData: false,
+    accounts: existingAccounts && existingAccounts.length > 0 ? existingAccounts : createDefaultAccounts(),
     products: [],
     stockImports: [],
     orders: [],
     shareholders: [],
     expenses: [],
     budgetItems: [],
+    auditLogs: [],
   };
 }

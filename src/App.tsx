@@ -3,39 +3,56 @@ import {
   Boxes,
   Calculator,
   Download,
+  History,
   LayoutDashboard,
+  LogOut,
   Menu,
   Plus,
   RotateCcw,
+  Settings,
   ShoppingBag,
   Trash2,
   Upload,
   Wallet,
   X,
 } from 'lucide-react';
+import { AccountSettingsModal } from './components/AccountSettingsModal';
+import { AuditLogTab } from './components/AuditLogTab';
 import { BudgetTab } from './components/BudgetTab';
 import { ConfirmModal } from './components/ConfirmModal';
 import { DashboardTab } from './components/DashboardTab';
 import { FinanceTab } from './components/FinanceTab';
 import { InventoryTab } from './components/InventoryTab';
+import { LoginScreen } from './components/LoginScreen';
 import { OrdersTab } from './components/OrdersTab';
 import { createEmptyState, createSeedState } from './data/seedData';
 import {
   AppState,
   BudgetItem,
   Expense,
-  ExpenseStatus,
   Order,
   Product,
   Shareholder,
   ShippingStatus,
   StockImport,
+  UserAccount,
+  UserRole,
 } from './types/erp';
 import {
+  ActorIdentity,
+  addExpenseWithAudit,
+  addShareholderWithAudit,
+  addStockImportWithAudit,
+  authenticateUser,
   cancelOrder,
+  changeUserPinWithAudit,
   computeBrandPnL,
   confirmOrderPayment,
   createOrderWithValidation,
+  createUserAccountWithAudit,
+  deleteExpenseWithAudit,
+  deleteShareholderWithAudit,
+  ExpenseUpdatePatch,
   exportOrdersToCSV,
   exportPnLToCSV,
   exportStateToJSON,
@@ -46,13 +63,17 @@ import {
   OrderDraftInput,
   OrderShippingUpdate,
   parseImportedJSON,
+  saveProductWithAudit,
   toggleExpenseStatus,
+  updateExpenseWithAudit,
   updateOrderShipping,
+  updateShareholderWithAudit,
 } from './utils/finance';
 
-type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'budget';
+type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'budget' | 'audit';
 
 const STORAGE_KEY = 'tn_tv_vm_erp_state_v1';
+const SESSION_USER_KEY = 'tn_tv_vm_active_user_v1';
 
 const NAV_ITEMS: Array<{
   id: TabId;
@@ -90,6 +111,12 @@ const NAV_ITEMS: Array<{
     subtitle: 'Kế hoạch nhập & Ads',
     icon: Calculator,
   },
+  {
+    id: 'audit',
+    label: 'Lịch sử thao tác',
+    subtitle: 'Nhật ký chỉnh sửa',
+    icon: History,
+  },
 ];
 
 function loadInitialState(): AppState {
@@ -107,6 +134,22 @@ function loadInitialState(): AppState {
   return createSeedState();
 }
 
+function loadInitialSessionUserId(accounts: UserAccount[]): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('autostart') === '1' && accounts[0]) {
+      return accounts[0].id;
+    }
+    const saved = sessionStorage.getItem(SESSION_USER_KEY);
+    if (saved && accounts.some((a) => a.id === saved)) {
+      return saved;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return null;
+}
+
 function triggerDownload(content: string, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -121,14 +164,20 @@ function triggerDownload(content: string, filename: string, mimeType: string) {
 
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadInitialState());
+  const [currentUserId, setCurrentUserId] = useState<string | null>(() =>
+    loadInitialSessionUserId(loadInitialState().accounts)
+  );
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [isOrderCreateOpen, setIsOrderCreateOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const currentUser = state.accounts.find((a) => a.id === currentUserId) ?? null;
 
   useEffect(() => {
     try {
@@ -137,6 +186,18 @@ export default function App() {
       // Ignore storage quota errors
     }
   }, [state]);
+
+  useEffect(() => {
+    try {
+      if (currentUserId) {
+        sessionStorage.setItem(SESSION_USER_KEY, currentUserId);
+      } else {
+        sessionStorage.removeItem(SESSION_USER_KEY);
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!notice) return;
@@ -148,6 +209,36 @@ export default function App() {
     setNotice({ type, text });
   };
 
+  const handleLogin = (
+    identifier: string,
+    pin: string
+  ): { ok: true } | { ok: false; error: string } => {
+    const res = authenticateUser(state.accounts, identifier, pin);
+    if (!res.ok) return res;
+    setCurrentUserId(res.account.id);
+    setActiveTab('dashboard');
+    setNotice(null);
+    return { ok: true };
+  };
+
+  const handleLogout = () => {
+    setCurrentUserId(null);
+    setSettingsOpen(false);
+    setIsOrderCreateOpen(false);
+    setMobileMenuOpen(false);
+    setNotice(null);
+  };
+
+  if (!currentUser) {
+    return <LoginScreen accounts={state.accounts} onLogin={handleLogin} />;
+  }
+
+  const actor: ActorIdentity = {
+    id: currentUser.id,
+    name: currentUser.name,
+    role: currentUser.role,
+  };
+
   const handleOpenNewOrder = () => {
     setActiveTab('orders');
     setIsOrderCreateOpen(true);
@@ -157,7 +248,7 @@ export default function App() {
   const handleCreateOrder = (
     draft: OrderDraftInput
   ): { ok: true } | { ok: false; error: string } => {
-    const result = createOrderWithValidation(state, draft);
+    const result = createOrderWithValidation(state, draft, actor);
     if (!result.ok) {
       return result;
     }
@@ -165,28 +256,30 @@ export default function App() {
     const hasShipCost = result.order.shopShippingCost > 0;
     showNotice(
       hasShipCost
-        ? `Đã tạo đơn ${result.order.code}, trừ tồn kho và tự động hạch toán cước vận chuyển vào Quỹ.`
-        : `Đã tạo đơn ${result.order.code} và tự động trừ tồn kho.`
+        ? `Đã tạo đơn ${result.order.code} (${actor.name}), trừ tồn kho và tự động hạch toán cước vận chuyển vào Quỹ.`
+        : `Đã tạo đơn ${result.order.code} (${actor.name}) và tự động trừ tồn kho.`
     );
     return { ok: true };
   };
 
   const handleConfirmPayment = (orderId: string) => {
-    setState((prev) => confirmOrderPayment(prev, orderId));
-    showNotice('Đã xác nhận thanh toán đơn hàng (COD cập nhật về 0 đ).');
+    setState((prev) => confirmOrderPayment(prev, orderId, actor));
+    showNotice(`Đã xác nhận thanh toán bởi ${actor.name} (COD cập nhật về 0 đ).`);
   };
 
   const handleCancelOrder = (orderId: string) => {
-    setState((prev) => cancelOrder(prev, orderId));
-    showNotice('Đã hủy đơn hàng, hoàn lại tồn kho và xóa khoản chi cước vận chuyển liên kết (nếu có).');
+    setState((prev) => cancelOrder(prev, orderId, actor));
+    showNotice(
+      `Đã hủy đơn hàng bởi ${actor.name}, hoàn lại tồn kho và xóa khoản chi cước vận chuyển liên kết.`
+    );
   };
 
   const handleUpdateOrderShipping = (orderId: string, patch: OrderShippingUpdate) => {
-    setState((prev) => updateOrderShipping(prev, orderId, patch));
+    setState((prev) => updateOrderShipping(prev, orderId, patch, actor));
     if (patch.shopShippingCost !== undefined) {
       showNotice(
         patch.shopShippingCost > 0
-          ? 'Đã cập nhật thông tin vận chuyển và đồng bộ khoản chi sang Sổ Quỹ.'
+          ? 'Đã cập nhật thông tin vận chuyển, ghi lịch sử và đồng bộ khoản chi sang Sổ Quỹ.'
           : 'Đã cập nhật vận chuyển và gỡ khoản chi cước khỏi Sổ Quỹ.'
       );
     } else {
@@ -195,7 +288,7 @@ export default function App() {
   };
 
   const handleMarkOrdersShippingStatus = (orderIds: string[], status: ShippingStatus) => {
-    setState((prev) => markOrdersShippingStatus(prev, orderIds, status));
+    setState((prev) => markOrdersShippingStatus(prev, orderIds, status, actor));
     showNotice(`Đã chuyển ${orderIds.length} đơn sang trạng thái "${status}".`);
   };
 
@@ -210,114 +303,90 @@ export default function App() {
   };
 
   const handleSaveProduct = (productInput: Omit<Product, 'id'> & { id?: string }) => {
-    setState((prev) => {
-      if (productInput.id) {
-        return {
-          ...prev,
-          products: prev.products.map((p) =>
-            p.id === productInput.id ? { ...p, ...productInput, id: p.id } : p
-          ),
-        };
-      }
-      const newProduct: Product = {
-        ...productInput,
-        id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      };
-      return {
-        ...prev,
-        products: [newProduct, ...prev.products],
-      };
-    });
+    setState((prev) => saveProductWithAudit(prev, productInput, actor));
     showNotice(
-      productInput.id ? 'Đã cập nhật thông tin mẫu sản phẩm.' : 'Đã thêm mẫu sản phẩm mới.'
+      productInput.id
+        ? 'Đã cập nhật thông tin mẫu sản phẩm và lưu nhật ký chỉnh sửa.'
+        : 'Đã thêm mẫu sản phẩm mới.'
     );
   };
 
   const handleAddStockImport = (
-    imp: Omit<StockImport, 'id'>,
+    imp: Omit<StockImport, 'id' | 'enteredBy'>,
     alsoRecordCashExpense: boolean
   ) => {
-    setState((prev) => {
-      const newImport: StockImport = {
-        ...imp,
-        id: `imp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      };
-      const product = prev.products.find((p) => p.id === imp.productId);
-      const nextExpenses = [...prev.expenses];
-
-      if (alsoRecordCashExpense && product) {
-        nextExpenses.unshift({
-          id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          date: imp.date,
-          category: 'Nhập hàng',
-          brandScope: product.brand,
-          detail: `Nhập kho ${product.code} (${imp.size}) × ${imp.quantity}`,
-          amount: imp.quantity * imp.unitCost,
-          paidBy: 'Ngân chi',
-          receiptNote: imp.note || 'Phiếu nhập kho',
-          status: ExpenseStatus.COMPLETED,
-        });
-      }
-
-      return {
-        ...prev,
-        stockImports: [newImport, ...prev.stockImports],
-        expenses: nextExpenses,
-      };
-    });
-    showNotice('Đã nhập kho mới và cập nhật Tổng giá nhập.');
+    setState((prev) => addStockImportWithAudit(prev, imp, alsoRecordCashExpense, actor));
+    showNotice(`Đã nhập kho mới (${actor.name}) và cập nhật Tổng giá nhập.`);
   };
 
   const handleAddShareholder = (sh: Omit<Shareholder, 'id'>) => {
-    setState((prev) => ({
-      ...prev,
-      shareholders: [
-        ...prev.shareholders,
-        { ...sh, id: `sh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
-      ],
-    }));
+    setState((prev) => addShareholderWithAudit(prev, sh, actor));
     showNotice(`Đã thêm cổ đông ${sh.name}.`);
   };
 
+  const handleUpdateShareholder = (
+    id: string,
+    patch: Partial<Pick<Shareholder, 'name' | 'contribution' | 'note'>>
+  ) => {
+    setState((prev) => updateShareholderWithAudit(prev, id, patch, actor));
+    showNotice('Đã cập nhật vốn góp cổ đông và ghi lại giá trị cũ → mới vào Lịch sử.');
+  };
+
   const handleDeleteShareholder = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      shareholders: prev.shareholders.filter((s) => s.id !== id),
-    }));
+    const res = deleteShareholderWithAudit(state, id, actor);
+    if (!res.ok) {
+      showNotice(res.error, 'error');
+      return;
+    }
+    setState(res.state);
     showNotice('Đã xóa cổ đông khỏi danh sách góp vốn.');
   };
 
-  const handleAddExpense = (exp: Omit<Expense, 'id'>) => {
-    setState((prev) => ({
-      ...prev,
-      expenses: [
-        { ...exp, id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
-        ...prev.expenses,
-      ],
-    }));
-    showNotice('Đã ghi nhận khoản chi mới vào Quỹ tiền mặt.');
+  const handleAddExpense = (exp: Omit<Expense, 'id' | 'enteredBy'>) => {
+    setState((prev) => addExpenseWithAudit(prev, exp, actor));
+    showNotice(`Đã ghi nhận khoản chi mới (${actor.name}) vào Quỹ tiền mặt.`);
+  };
+
+  const handleUpdateExpense = (id: string, patch: ExpenseUpdatePatch) => {
+    setState((prev) => updateExpenseWithAudit(prev, id, patch, actor));
+    showNotice('Đã cập nhật khoản chi và lưu vết giá trị cũ → mới vào Lịch sử thao tác.');
   };
 
   const handleToggleExpenseStatus = (id: string) => {
-    setState((prev) => toggleExpenseStatus(prev, id));
+    setState((prev) => toggleExpenseStatus(prev, id, actor));
   };
 
   const handleDeleteExpense = (id: string) => {
-    setState((prev) => {
-      const target = prev.expenses.find((e) => e.id === id);
-      const nextExpenses = prev.expenses.filter((e) => e.id !== id);
-      const nextOrders = target?.linkedOrderId
-        ? prev.orders.map((o) =>
-            o.id === target.linkedOrderId ? { ...o, shopShippingCost: 0 } : o
-          )
-        : prev.orders;
-      return {
-        ...prev,
-        expenses: nextExpenses,
-        orders: nextOrders,
-      };
-    });
-    showNotice('Đã xóa khoản chi và đồng bộ lại Quỹ tiền mặt.');
+    const res = deleteExpenseWithAudit(state, id, actor);
+    if (!res.ok) {
+      showNotice(res.error, 'error');
+      return;
+    }
+    setState(res.state);
+    showNotice('Đã xóa vĩnh viễn khoản chi và đồng bộ lại Quỹ tiền mặt.');
+  };
+
+  const handleChangePin = (
+    targetUserId: string,
+    newPin: string,
+    currentPinForSelf?: string
+  ): { ok: true } | { ok: false; error: string } => {
+    const res = changeUserPinWithAudit(state, targetUserId, newPin, actor, currentPinForSelf);
+    if (!res.ok) return res;
+    setState(res.state);
+    return { ok: true };
+  };
+
+  const handleCreateAccount = (input: {
+    name: string;
+    username: string;
+    role: UserRole;
+    pin: string;
+  }): { ok: true } | { ok: false; error: string } => {
+    const res = createUserAccountWithAudit(state, input, actor);
+    if (!res.ok) return res;
+    setState(res.state);
+    return { ok: true };
   };
 
   const handleAddBudgetItem = (item: Omit<BudgetItem, 'id'>) => {
@@ -394,12 +463,21 @@ export default function App() {
   };
 
   const handleClearSampleData = () => {
-    setState(createEmptyState());
+    if (currentUser.role !== 'Admin') {
+      showNotice('Chỉ tài khoản Admin mới có quyền xóa dữ liệu mẫu.', 'error');
+      setConfirmClearOpen(false);
+      return;
+    }
+    setState((prev) => createEmptyState(prev.accounts));
     setConfirmClearOpen(false);
     showNotice('Đã xóa toàn bộ dữ liệu mẫu. Bạn có thể bắt đầu nhập liệu thực tế.');
   };
 
   const handleRestoreSampleData = () => {
+    if (currentUser.role !== 'Admin') {
+      showNotice('Chỉ tài khoản Admin mới có quyền nạp lại dữ liệu mẫu.', 'error');
+      return;
+    }
     setState(createSeedState());
     showNotice('Đã nạp lại bộ dữ liệu mẫu để trải nghiệm.');
   };
@@ -494,25 +572,26 @@ export default function App() {
           Xuất CSV Đơn hàng
         </button>
 
-        {state.products.length > 0 || state.orders.length > 0 || state.expenses.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => setConfirmClearOpen(true)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#A63429]/25 bg-white px-3 py-2 text-xs font-medium text-[#A63429] transition-colors hover:bg-[#A63429]/5 whitespace-nowrap"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Xóa dữ liệu mẫu
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleRestoreSampleData}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-white px-3 py-2 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#0D4F43]/5 whitespace-nowrap"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Nạp dữ liệu mẫu
-          </button>
-        )}
+        {currentUser.role === 'Admin' &&
+          (state.products.length > 0 || state.orders.length > 0 || state.expenses.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setConfirmClearOpen(true)}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#A63429]/25 bg-white px-3 py-2 text-xs font-medium text-[#A63429] transition-colors hover:bg-[#A63429]/5 whitespace-nowrap"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Xóa dữ liệu mẫu
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleRestoreSampleData}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-white px-3 py-2 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#0D4F43]/5 whitespace-nowrap"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Nạp dữ liệu mẫu
+            </button>
+          ))}
 
         <input
           ref={fileInputRef}
@@ -556,7 +635,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Top Bar Contract: Breadcrumb/Title — Date Context — Primary Action */}
+        {/* Top Bar Contract: Breadcrumb/Title — Date Context — User & Primary Action */}
         <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-4 border-b border-[#E4DFD5] bg-[#FAF8F4]/95 px-4 backdrop-blur-xs sm:px-8">
           <div className="flex items-center gap-3 min-w-0">
             <button
@@ -570,22 +649,66 @@ export default function App() {
             <h1 className="font-serif text-lg font-semibold text-[#1A1F1E] truncate sm:text-xl">
               {activeNav.label}
             </h1>
+            <span className="hidden xl:inline text-xs text-[#57605E] whitespace-nowrap">
+              · {formatDateVN(todayISO)}
+            </span>
           </div>
 
-          <div className="hidden md:flex items-center gap-2 text-xs text-[#57605E] whitespace-nowrap">
-            <span>Hôm nay: {formatDateVN(todayISO)}</span>
-            <span aria-hidden="true">·</span>
-            <span>Tơ Nhã · Tơ Vương · Vân Miên</span>
-          </div>
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-[#57605E] whitespace-nowrap">
+              <span>
+                Xin chào, <strong className="font-semibold text-[#1A1F1E]">{currentUser.name}</strong>
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className={currentUser.role === 'Admin' ? 'font-medium text-[#0D4F43]' : ''}>
+                {currentUser.role === 'Admin' ? 'Quản lý' : 'Thành viên'}
+              </span>
+            </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab('audit')}
+              aria-label="Xem lịch sử thao tác"
+              title="Lịch sử thao tác"
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium whitespace-nowrap shrink-0 ${
+                activeTab === 'audit'
+                  ? 'border-[#0D4F43] bg-[#0D4F43]/10 text-[#0D4F43]'
+                  : 'border-[#E4DFD5] bg-white text-[#1A1F1E] hover:bg-[#FAF8F4]'
+              }`}
+            >
+              <History className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Lịch sử</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Cài đặt tài khoản"
+              title="Cài đặt tài khoản & Đổi PIN"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Cài đặt</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              aria-label="Đăng xuất / Đổi người dùng"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#A63429] hover:bg-[#A63429]/5 whitespace-nowrap shrink-0"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Đăng xuất / Đổi người dùng</span>
+              <span className="sm:hidden">{currentUser.name}</span>
+            </button>
+
             <button
               type="button"
               onClick={handleOpenNewOrder}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap shrink-0"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap shrink-0"
             >
               <Plus className="h-4 w-4" />
-              Tạo đơn mới
+              <span className="hidden sm:inline">Tạo đơn mới</span>
             </button>
           </div>
         </header>
@@ -628,6 +751,7 @@ export default function App() {
           {activeTab === 'orders' && (
             <OrdersTab
               state={state}
+              currentUser={currentUser}
               isCreateOpen={isOrderCreateOpen}
               onOpenCreate={() => setIsOrderCreateOpen(true)}
               onCloseCreate={() => setIsOrderCreateOpen(false)}
@@ -644,6 +768,7 @@ export default function App() {
           {activeTab === 'inventory' && (
             <InventoryTab
               state={state}
+              currentUser={currentUser}
               onSaveProduct={handleSaveProduct}
               onAddStockImport={handleAddStockImport}
             />
@@ -652,9 +777,12 @@ export default function App() {
           {activeTab === 'finance' && (
             <FinanceTab
               state={state}
+              currentUser={currentUser}
               onAddShareholder={handleAddShareholder}
+              onUpdateShareholder={handleUpdateShareholder}
               onDeleteShareholder={handleDeleteShareholder}
               onAddExpense={handleAddExpense}
+              onUpdateExpense={handleUpdateExpense}
               onToggleExpenseStatus={handleToggleExpenseStatus}
               onDeleteExpense={handleDeleteExpense}
             />
@@ -667,16 +795,27 @@ export default function App() {
               onDeleteBudgetItem={handleDeleteBudgetItem}
             />
           )}
+
+          {activeTab === 'audit' && <AuditLogTab state={state} />}
         </main>
       </div>
 
       <ConfirmModal
         open={confirmClearOpen}
         title="Xóa toàn bộ dữ liệu mẫu?"
-        description="Hành động này sẽ xóa sạch danh mục mẫu, đơn hàng, tồn kho, cổ đông, chi phí và dự trù hiện tại để bạn bắt đầu nhập liệu thực tế. Bạn nên Xuất JSON sao lưu trước nếu cần giữ lại."
+        description="Hành động này sẽ xóa sạch danh mục mẫu, đơn hàng, tồn kho, cổ đông, chi phí, dự trù và nhật ký hiện tại (giữ nguyên tài khoản team) để bạn bắt đầu nhập liệu thực tế."
         confirmLabel="Xóa toàn bộ dữ liệu"
         onConfirm={handleClearSampleData}
         onCancel={() => setConfirmClearOpen(false)}
+      />
+
+      <AccountSettingsModal
+        open={settingsOpen}
+        currentUser={currentUser}
+        accounts={state.accounts}
+        onClose={() => setSettingsOpen(false)}
+        onChangePin={handleChangePin}
+        onCreateAccount={handleCreateAccount}
       />
     </div>
   );

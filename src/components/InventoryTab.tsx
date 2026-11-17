@@ -8,20 +8,23 @@ import {
   Product,
   SizeOption,
   StockImport,
+  UserAccount,
 } from '../types/erp';
 import { computeInventoryRows, formatDateVN, formatVND, getTodayISO } from '../utils/finance';
 
 interface InventoryTabProps {
   state: AppState;
+  currentUser: UserAccount;
   onSaveProduct: (product: Omit<Product, 'id'> & { id?: string }) => void;
   onAddStockImport: (
-    imp: Omit<StockImport, 'id'>,
+    imp: Omit<StockImport, 'id' | 'enteredBy'>,
     alsoRecordCashExpense: boolean
   ) => void;
 }
 
 export const InventoryTab: React.FC<InventoryTabProps> = ({
   state,
+  currentUser,
   onSaveProduct,
   onAddStockImport,
 }) => {
@@ -250,9 +253,14 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
           className="rounded-xl border border-[#0D4F43]/30 bg-white p-6"
         >
           <div className="flex items-center justify-between gap-4 border-b border-[#ECE7DD] pb-4">
-            <h2 id="product-form-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
-              {editingProductId ? 'Chỉnh sửa mẫu sản phẩm' : 'Thêm mẫu sản phẩm mới'}
-            </h2>
+            <div>
+              <h2 id="product-form-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
+                {editingProductId ? 'Chỉnh sửa mẫu sản phẩm' : 'Thêm mẫu sản phẩm mới'}
+              </h2>
+              <p className="mt-0.5 text-xs text-[#57605E]">
+                Người thao tác: <strong className="text-[#0D4F43]">{currentUser.name}</strong> · Mọi thay đổi giá hoặc tồn kho đều được lưu vết vào Lịch sử thao tác.
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => setShowProductForm(false)}
@@ -444,7 +452,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                 Nhập kho mới
               </h2>
               <p className="mt-0.5 text-xs text-[#57605E]">
-                Số lượng và đơn giá nhập sẽ tự động cộng vào Tồn kho và Tổng giá nhập trên Dashboard.
+                Người nhập liệu: <strong className="text-[#0D4F43]">{currentUser.name}</strong> · Số lượng và đơn giá nhập tự động cộng vào Tồn kho và Tổng giá nhập.
               </p>
             </div>
             <button
@@ -777,10 +785,11 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
               Lịch sử phiếu nhập kho gần đây ({state.stockImports.length})
             </h3>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[600px] text-left text-xs">
+              <table className="w-full min-w-[680px] text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#ECE7DD] text-[#57605E]">
                     <th className="py-2 pr-3">Ngày nhập</th>
+                    <th className="py-2 px-3">Người nhập</th>
                     <th className="py-2 px-3">Mẫu sản phẩm</th>
                     <th className="py-2 px-3 text-center">Size</th>
                     <th className="py-2 px-3 text-right">SL</th>
@@ -795,6 +804,9 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                       <tr key={imp.id}>
                         <td className="py-2 pr-3 font-mono text-[#57605E]">
                           {formatDateVN(imp.date)}
+                        </td>
+                        <td className="py-2 px-3 font-medium text-[#1A1F1E]">
+                          {imp.enteredBy || 'Hệ thống'}
                         </td>
                         <td className="py-2 px-3 text-[#1A1F1E]">
                           {prd ? `${prd.code} — ${prd.name}` : imp.productId}

@@ -2,6 +2,8 @@ import {
   ALL_BRANDS,
   ALL_SIZES,
   AppState,
+  AuditCategory,
+  AuditLogEntry,
   Brand,
   BudgetItem,
   Expense,
@@ -15,7 +17,21 @@ import {
   ShippingStatus,
   SizeOption,
   StockImport,
+  UserAccount,
+  UserRole,
 } from '../types/erp';
+
+export interface ActorIdentity {
+  id: string;
+  name: string;
+  role: UserRole;
+}
+
+const DEFAULT_ACTOR: ActorIdentity = {
+  id: 'acc_ngan',
+  name: 'Ngân',
+  role: 'Admin',
+};
 
 export function getTodayISO(date: Date = new Date()): string {
   const year = date.getFullYear();
@@ -36,6 +52,17 @@ export function formatDateVN(isoDate: string): string {
   return `${d}/${m}/${y}`;
 }
 
+export function formatAuditTimestamp(isoString: string): string {
+  if (!isoString) return '';
+  const dt = new Date(isoString);
+  if (Number.isNaN(dt.getTime())) return isoString;
+  const hh = String(dt.getHours()).padStart(2, '0');
+  const mm = String(dt.getMinutes()).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mo = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${hh}:${mm} ${dd}/${mo}`;
+}
+
 export function formatVND(
   amount: number,
   options: { parenthesesForNegative?: boolean } = {}
@@ -49,6 +76,158 @@ export function formatVND(
     return `-${absFormatted} đ`;
   }
   return `${absFormatted} đ`;
+}
+
+export function formatCompactVND(amount: number): string {
+  const rounded = Math.round(amount);
+  const absFormatted = new Intl.NumberFormat('vi-VN').format(Math.abs(rounded));
+  return rounded < 0 ? `-${absFormatted}đ` : `${absFormatted}đ`;
+}
+
+export function createAuditEntry(input: {
+  actor: ActorIdentity;
+  category: AuditCategory;
+  action: string;
+  detail: string;
+  oldValue?: string;
+  newValue?: string;
+  timestamp?: string;
+}): AuditLogEntry {
+  return {
+    id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    timestamp: input.timestamp ?? new Date().toISOString(),
+    actorId: input.actor.id,
+    actorName: input.actor.name,
+    category: input.category,
+    action: input.action,
+    detail: input.detail,
+    oldValue: input.oldValue,
+    newValue: input.newValue,
+  };
+}
+
+export function authenticateUser(
+  accounts: UserAccount[],
+  identifier: string,
+  pin: string
+): { ok: true; account: UserAccount } | { ok: false; error: string } {
+  const cleanId = identifier.trim().toLowerCase();
+  const cleanPin = pin.trim();
+  if (!cleanId) {
+    return { ok: false, error: 'Vui lòng chọn tài khoản hoặc nhập tên đăng nhập.' };
+  }
+  if (!cleanPin) {
+    return { ok: false, error: 'Vui lòng nhập mật khẩu / mã PIN.' };
+  }
+
+  const matched = accounts.find(
+    (a) => a.username.toLowerCase() === cleanId || a.name.toLowerCase() === cleanId
+  );
+  if (!matched) {
+    return { ok: false, error: 'Không tìm thấy tài khoản phù hợp.' };
+  }
+  if (matched.pin !== cleanPin) {
+    return { ok: false, error: 'Mật khẩu / mã PIN không đúng. Vui lòng thử lại.' };
+  }
+  return { ok: true, account: matched };
+}
+
+export function createUserAccountWithAudit(
+  state: AppState,
+  input: { name: string; username: string; role: UserRole; pin: string },
+  actor: ActorIdentity
+): { ok: true; state: AppState; account: UserAccount } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return { ok: false, error: 'Chỉ Admin mới có quyền tạo tài khoản mới.' };
+  }
+  const name = input.name.trim();
+  const username = input.username.trim().toLowerCase().replace(/\s+/g, '');
+  const pin = input.pin.trim();
+
+  if (!name || !username) {
+    return { ok: false, error: 'Vui lòng nhập đầy đủ Tên hiển thị và Tên đăng nhập.' };
+  }
+  if (pin.length < 4) {
+    return { ok: false, error: 'Mã PIN / mật khẩu phải có ít nhất 4 ký tự.' };
+  }
+  const duplicate = state.accounts.some(
+    (a) =>
+      a.username.toLowerCase() === username ||
+      a.name.toLowerCase() === name.toLowerCase()
+  );
+  if (duplicate) {
+    return { ok: false, error: 'Tên đăng nhập hoặc tên thành viên đã tồn tại.' };
+  }
+
+  const account: UserAccount = {
+    id: `acc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    name,
+    username,
+    role: input.role,
+    pin,
+    createdAt: new Date().toISOString(),
+  };
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài khoản',
+    action: 'Tạo tài khoản mới',
+    detail: `${actor.name} đã tạo tài khoản "${account.name}" (Tên đăng nhập: ${account.username}, Vai trò: ${account.role})`,
+  });
+
+  return {
+    ok: true,
+    account,
+    state: {
+      ...state,
+      accounts: [...state.accounts, account],
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function changeUserPinWithAudit(
+  state: AppState,
+  targetUserId: string,
+  newPin: string,
+  actor: ActorIdentity,
+  currentPinForSelf?: string
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  const target = state.accounts.find((a) => a.id === targetUserId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy tài khoản cần đổi mật khẩu.' };
+  }
+  const isSelf = target.id === actor.id;
+  if (!isSelf && actor.role !== 'Admin') {
+    return { ok: false, error: 'Bạn chỉ được đổi mã PIN của chính mình.' };
+  }
+  if (isSelf && currentPinForSelf !== undefined && target.pin !== currentPinForSelf.trim()) {
+    return { ok: false, error: 'Mã PIN hiện tại không chính xác.' };
+  }
+  const cleanNewPin = newPin.trim();
+  if (cleanNewPin.length < 4) {
+    return { ok: false, error: 'Mã PIN / mật khẩu mới phải có ít nhất 4 ký tự.' };
+  }
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài khoản',
+    action: 'Đổi mã PIN / Mật khẩu',
+    detail: isSelf
+      ? `${actor.name} đã tự thay đổi mã PIN đăng nhập`
+      : `${actor.name} đã đặt lại mã PIN cho tài khoản ${target.name}`,
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      accounts: state.accounts.map((a) =>
+        a.id === targetUserId ? { ...a, pin: cleanNewPin } : a
+      ),
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
 }
 
 export function getOrderItemsSubtotal(order: Pick<Order, 'items'>): number {
@@ -85,6 +264,7 @@ export function syncOrderShippingExpense(expenses: Expense[], order: Order): Exp
     paidBy: order.shippingCostPayer || 'Ngân chi',
     receiptNote: `Cước VC đơn ${order.code}`,
     status: ExpenseStatus.COMPLETED,
+    enteredBy: order.createdBy,
   };
 
   return [linkedExpense, ...filtered];
@@ -428,7 +608,8 @@ export type OrderCreateResult =
 
 export function createOrderWithValidation(
   state: AppState,
-  draft: OrderDraftInput
+  draft: OrderDraftInput,
+  actor: ActorIdentity = DEFAULT_ACTOR
 ): OrderCreateResult {
   const customerName = draft.customerName.trim();
   const customerPhone = draft.customerPhone.trim();
@@ -521,6 +702,7 @@ export function createOrderWithValidation(
     }
   }
 
+  const nowISO = new Date().toISOString();
   const nextSeq = state.orders.length + 1;
   const code = `DH-${String(nextSeq).padStart(4, '0')}`;
   const order: Order = {
@@ -541,10 +723,21 @@ export function createOrderWithValidation(
     note: draft.note.trim(),
     paymentStatus: draft.paymentStatus,
     isCancelled: false,
-    createdAt: new Date().toISOString(),
+    createdAt: nowISO,
+    createdBy: actor.name,
+    paymentConfirmedBy: draft.paymentStatus === PaymentStatus.PAID ? actor.name : undefined,
+    paymentConfirmedAt: draft.paymentStatus === PaymentStatus.PAID ? nowISO : undefined,
   };
 
   const nextExpenses = syncOrderShippingExpense(state.expenses, order);
+  const totalAmount = getOrderTotal(order);
+  const log = createAuditEntry({
+    actor,
+    category: 'Đơn hàng',
+    action: 'Tạo đơn hàng',
+    detail: `${actor.name} đã tạo đơn hàng #${order.code} (Khách: ${order.customerName} - ${formatCompactVND(totalAmount)})`,
+    timestamp: nowISO,
+  });
 
   return {
     ok: true,
@@ -553,24 +746,66 @@ export function createOrderWithValidation(
       ...state,
       orders: [order, ...state.orders],
       expenses: nextExpenses,
+      auditLogs: [log, ...state.auditLogs],
     },
   };
 }
 
-export function confirmOrderPayment(state: AppState, orderId: string): AppState {
+export function confirmOrderPayment(
+  state: AppState,
+  orderId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const target = state.orders.find((o) => o.id === orderId);
+  if (!target || target.isCancelled || target.paymentStatus === PaymentStatus.PAID) {
+    return state;
+  }
+  const nowISO = new Date().toISOString();
+  const totalAmount = getOrderTotal(target);
+  const log = createAuditEntry({
+    actor,
+    category: 'Đơn hàng',
+    action: 'Xác nhận thanh toán',
+    detail: `${actor.name} đã xác nhận ĐÃ THANH TOÁN cho đơn #${target.code} (Khách: ${target.customerName} - ${formatCompactVND(totalAmount)})`,
+    oldValue: PaymentStatus.UNPAID,
+    newValue: PaymentStatus.PAID,
+    timestamp: nowISO,
+  });
+
   return {
     ...state,
     orders: state.orders.map((o) =>
-      o.id === orderId && !o.isCancelled ? { ...o, paymentStatus: PaymentStatus.PAID } : o
+      o.id === orderId && !o.isCancelled
+        ? {
+            ...o,
+            paymentStatus: PaymentStatus.PAID,
+            paymentConfirmedBy: actor.name,
+            paymentConfirmedAt: nowISO,
+          }
+        : o
     ),
+    auditLogs: [log, ...state.auditLogs],
   };
 }
 
-export function cancelOrder(state: AppState, orderId: string): AppState {
+export function cancelOrder(
+  state: AppState,
+  orderId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const target = state.orders.find((o) => o.id === orderId);
+  if (!target || target.isCancelled) return state;
+
+  const nowISO = new Date().toISOString();
   let updatedOrder: Order | null = null;
   const nextOrders = state.orders.map((o) => {
     if (o.id === orderId) {
-      updatedOrder = { ...o, isCancelled: true };
+      updatedOrder = {
+        ...o,
+        isCancelled: true,
+        cancelledBy: actor.name,
+        cancelledAt: nowISO,
+      };
       return updatedOrder;
     }
     return o;
@@ -580,10 +815,19 @@ export function cancelOrder(state: AppState, orderId: string): AppState {
     ? syncOrderShippingExpense(state.expenses, updatedOrder)
     : state.expenses;
 
+  const log = createAuditEntry({
+    actor,
+    category: 'Đơn hàng',
+    action: 'Hủy đơn hàng',
+    detail: `${actor.name} đã HỦY đơn hàng #${target.code} (Khách: ${target.customerName} - ${formatCompactVND(getOrderTotal(target))})`,
+    timestamp: nowISO,
+  });
+
   return {
     ...state,
     orders: nextOrders,
     expenses: nextExpenses,
+    auditLogs: [log, ...state.auditLogs],
   };
 }
 
@@ -599,8 +843,12 @@ export interface OrderShippingUpdate {
 export function updateOrderShipping(
   state: AppState,
   orderId: string,
-  patch: OrderShippingUpdate
+  patch: OrderShippingUpdate,
+  actor: ActorIdentity = DEFAULT_ACTOR
 ): AppState {
+  const prevOrder = state.orders.find((o) => o.id === orderId);
+  if (!prevOrder) return state;
+
   let updatedOrder: Order | null = null;
   const nextOrders = state.orders.map((o) => {
     if (o.id !== orderId) return o;
@@ -626,52 +874,527 @@ export function updateOrderShipping(
     return updatedOrder;
   });
 
-  const nextExpenses = updatedOrder
-    ? syncOrderShippingExpense(state.expenses, updatedOrder)
-    : state.expenses;
+  if (!updatedOrder) return state;
+  const nextOrder: Order = updatedOrder;
+
+  const changes: string[] = [];
+  if (prevOrder.shippingStatus !== nextOrder.shippingStatus) {
+    changes.push(`Trạng thái VC từ "${prevOrder.shippingStatus}" thành "${nextOrder.shippingStatus}"`);
+  }
+  if (prevOrder.shopShippingCost !== nextOrder.shopShippingCost) {
+    changes.push(
+      `Cước VC shop từ ${formatCompactVND(prevOrder.shopShippingCost)} thành ${formatCompactVND(nextOrder.shopShippingCost)}`
+    );
+  }
+  if (prevOrder.shippingMethod !== nextOrder.shippingMethod) {
+    changes.push(`Đơn vị VC từ "${prevOrder.shippingMethod}" thành "${nextOrder.shippingMethod}"`);
+  }
+  if (prevOrder.shippingCostPayer !== nextOrder.shippingCostPayer) {
+    changes.push(`Người chi cước từ "${prevOrder.shippingCostPayer}" thành "${nextOrder.shippingCostPayer}"`);
+  }
+  if (prevOrder.shippingAddress !== nextOrder.shippingAddress) {
+    changes.push(`Địa chỉ giao hàng đã cập nhật`);
+  }
+  if (prevOrder.weightGrams !== nextOrder.weightGrams) {
+    changes.push(`Trọng lượng từ ${prevOrder.weightGrams}g thành ${nextOrder.weightGrams}g`);
+  }
+
+  const nextExpenses = syncOrderShippingExpense(state.expenses, nextOrder);
+  const nextLogs =
+    changes.length > 0
+      ? [
+          createAuditEntry({
+            actor,
+            category: 'Đơn hàng',
+            action: 'Sửa vận chuyển đơn',
+            detail: `${actor.name} đã cập nhật vận chuyển đơn #${nextOrder.code}: ${changes.join('; ')}`,
+          }),
+          ...state.auditLogs,
+        ]
+      : state.auditLogs;
 
   return {
     ...state,
     orders: nextOrders,
     expenses: nextExpenses,
+    auditLogs: nextLogs,
   };
 }
 
 export function markOrdersShippingStatus(
   state: AppState,
   orderIds: string[],
-  status: ShippingStatus
+  status: ShippingStatus,
+  actor: ActorIdentity = DEFAULT_ACTOR
 ): AppState {
   const idSet = new Set(orderIds);
+  const affectedCodes = state.orders
+    .filter((o) => idSet.has(o.id) && !o.isCancelled && o.shippingStatus !== status)
+    .map((o) => o.code);
+
+  if (affectedCodes.length === 0) return state;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Đơn hàng',
+    action: 'Cập nhật trạng thái VTP',
+    detail: `${actor.name} đã chuyển ${affectedCodes.length} đơn (${affectedCodes.join(', ')}) sang trạng thái "${status}"`,
+  });
+
   return {
     ...state,
     orders: state.orders.map((o) =>
       idSet.has(o.id) && !o.isCancelled ? { ...o, shippingStatus: status } : o
     ),
+    auditLogs: [log, ...state.auditLogs],
   };
 }
 
-export function toggleExpenseStatus(state: AppState, expenseId: string): AppState {
+export function addExpenseWithAudit(
+  state: AppState,
+  exp: Omit<Expense, 'id' | 'enteredBy'>,
+  actor: ActorIdentity
+): AppState {
+  const newExpense: Expense = {
+    ...exp,
+    id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    enteredBy: actor.name,
+  };
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Thêm khoản chi',
+    detail: `${actor.name} đã thêm khoản chi '${newExpense.detail}' (${newExpense.category}) · ${formatCompactVND(newExpense.amount)} (${newExpense.paidBy})`,
+  });
+  return {
+    ...state,
+    expenses: [newExpense, ...state.expenses],
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export type ExpenseUpdatePatch = Partial<
+  Pick<
+    Expense,
+    'date' | 'category' | 'brandScope' | 'detail' | 'amount' | 'paidBy' | 'receiptNote' | 'status'
+  >
+>;
+
+export function updateExpenseWithAudit(
+  state: AppState,
+  expenseId: string,
+  patch: ExpenseUpdatePatch,
+  actor: ActorIdentity
+): AppState {
+  const prev = state.expenses.find((e) => e.id === expenseId);
+  if (!prev) return state;
+
+  const updated: Expense = {
+    ...prev,
+    date: patch.date ?? prev.date,
+    category: patch.category ?? prev.category,
+    brandScope: patch.brandScope ?? prev.brandScope,
+    detail: patch.detail !== undefined ? patch.detail.trim() || prev.detail : prev.detail,
+    amount:
+      patch.amount !== undefined && Number.isFinite(patch.amount)
+        ? Math.max(0, Math.round(patch.amount))
+        : prev.amount,
+    paidBy: patch.paidBy !== undefined ? patch.paidBy.trim() || prev.paidBy : prev.paidBy,
+    receiptNote: patch.receiptNote !== undefined ? patch.receiptNote.trim() : prev.receiptNote,
+    status: patch.status ?? prev.status,
+    updatedBy: actor.name,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const diffs: string[] = [];
+  const oldParts: string[] = [];
+  const newParts: string[] = [];
+
+  if (prev.detail !== updated.detail) {
+    diffs.push(`chi tiết từ '${prev.detail}' thành '${updated.detail}'`);
+    oldParts.push(`Chi tiết: ${prev.detail}`);
+    newParts.push(`Chi tiết: ${updated.detail}`);
+  }
+  if (prev.amount !== updated.amount) {
+    diffs.push(`số tiền từ ${formatCompactVND(prev.amount)} thành ${formatCompactVND(updated.amount)}`);
+    oldParts.push(formatCompactVND(prev.amount));
+    newParts.push(formatCompactVND(updated.amount));
+  }
+  if (prev.category !== updated.category) {
+    diffs.push(`hạng mục từ '${prev.category}' thành '${updated.category}'`);
+    oldParts.push(prev.category);
+    newParts.push(updated.category);
+  }
+  if (prev.brandScope !== updated.brandScope) {
+    diffs.push(`nhánh từ '${prev.brandScope}' thành '${updated.brandScope}'`);
+    oldParts.push(prev.brandScope);
+    newParts.push(updated.brandScope);
+  }
+  if (prev.paidBy !== updated.paidBy) {
+    diffs.push(`người ứng chi từ '${prev.paidBy}' thành '${updated.paidBy}'`);
+    oldParts.push(prev.paidBy);
+    newParts.push(updated.paidBy);
+  }
+  if (prev.status !== updated.status) {
+    diffs.push(`tình trạng từ '${prev.status}' thành '${updated.status}'`);
+    oldParts.push(prev.status);
+    newParts.push(updated.status);
+  }
+  if (prev.date !== updated.date) {
+    diffs.push(`ngày từ ${formatDateVN(prev.date)} thành ${formatDateVN(updated.date)}`);
+  }
+  if (prev.receiptNote !== updated.receiptNote) {
+    diffs.push(`ghi chú từ '${prev.receiptNote || 'trống'}' thành '${updated.receiptNote || 'trống'}'`);
+  }
+
+  if (diffs.length === 0) return state;
+
+  const nextOrders = updated.linkedOrderId
+    ? state.orders.map((o) =>
+        o.id === updated.linkedOrderId
+          ? { ...o, shopShippingCost: updated.amount, shippingCostPayer: updated.paidBy }
+          : o
+      )
+    : state.orders;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Sửa khoản chi',
+    detail: `${actor.name} đã sửa khoản chi '${prev.detail}': ${diffs.join('; ')}`,
+    oldValue: oldParts.join(' · ') || undefined,
+    newValue: newParts.join(' · ') || undefined,
+  });
+
+  return {
+    ...state,
+    expenses: state.expenses.map((e) => (e.id === expenseId ? updated : e)),
+    orders: nextOrders,
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function toggleExpenseStatus(
+  state: AppState,
+  expenseId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const prev = state.expenses.find((e) => e.id === expenseId);
+  if (!prev) return state;
+
+  const nextStatus =
+    prev.status === ExpenseStatus.PENDING ? ExpenseStatus.COMPLETED : ExpenseStatus.PENDING;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Đổi tình trạng chi',
+    detail: `${actor.name} đã đổi tình trạng khoản chi '${prev.detail}' từ ${prev.status} thành ${nextStatus}`,
+    oldValue: prev.status,
+    newValue: nextStatus,
+  });
+
   return {
     ...state,
     expenses: state.expenses.map((e) =>
       e.id === expenseId
-        ? {
-            ...e,
-            status:
-              e.status === ExpenseStatus.PENDING
-                ? ExpenseStatus.COMPLETED
-                : ExpenseStatus.PENDING,
-          }
+        ? { ...e, status: nextStatus, updatedBy: actor.name, updatedAt: new Date().toISOString() }
         : e
     ),
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function deleteExpenseWithAudit(
+  state: AppState,
+  expenseId: string,
+  actor: ActorIdentity
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return {
+      ok: false,
+      error: 'Chỉ Admin (Ngân) mới có quyền xóa vĩnh viễn giao dịch tài chính.',
+    };
+  }
+  const target = state.expenses.find((e) => e.id === expenseId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy khoản chi cần xóa.' };
+  }
+
+  const nextExpenses = state.expenses.filter((e) => e.id !== expenseId);
+  const nextOrders = target.linkedOrderId
+    ? state.orders.map((o) =>
+        o.id === target.linkedOrderId ? { ...o, shopShippingCost: 0 } : o
+      )
+    : state.orders;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Xóa vĩnh viễn khoản chi',
+    detail: `${actor.name} đã xóa vĩnh viễn khoản chi '${target.detail}' (${formatCompactVND(target.amount)} · ${target.paidBy})`,
+    oldValue: `${target.detail} (${formatCompactVND(target.amount)})`,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      expenses: nextExpenses,
+      orders: nextOrders,
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function addShareholderWithAudit(
+  state: AppState,
+  sh: Omit<Shareholder, 'id'>,
+  actor: ActorIdentity
+): AppState {
+  const created: Shareholder = {
+    ...sh,
+    id: `sh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    updatedBy: actor.name,
+  };
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Thêm vốn góp cổ đông',
+    detail: `${actor.name} đã thêm cổ đông '${created.name}' với số vốn ${formatCompactVND(created.contribution)}`,
+  });
+  return {
+    ...state,
+    shareholders: [...state.shareholders, created],
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function updateShareholderWithAudit(
+  state: AppState,
+  shareholderId: string,
+  patch: Partial<Pick<Shareholder, 'name' | 'contribution' | 'note'>>,
+  actor: ActorIdentity
+): AppState {
+  const prev = state.shareholders.find((s) => s.id === shareholderId);
+  if (!prev) return state;
+
+  const updated: Shareholder = {
+    ...prev,
+    name: patch.name !== undefined ? patch.name.trim() || prev.name : prev.name,
+    contribution:
+      patch.contribution !== undefined && Number.isFinite(patch.contribution)
+        ? Math.max(0, Math.round(patch.contribution))
+        : prev.contribution,
+    note: patch.note !== undefined ? patch.note.trim() : prev.note,
+    updatedBy: actor.name,
+  };
+
+  const diffs: string[] = [];
+  if (prev.name !== updated.name) {
+    diffs.push(`tên từ '${prev.name}' thành '${updated.name}'`);
+  }
+  if (prev.contribution !== updated.contribution) {
+    diffs.push(
+      `vốn góp từ ${formatCompactVND(prev.contribution)} thành ${formatCompactVND(updated.contribution)}`
+    );
+  }
+  if ((prev.note || '') !== (updated.note || '')) {
+    diffs.push(`ghi chú từ '${prev.note || 'trống'}' thành '${updated.note || 'trống'}'`);
+  }
+  if (diffs.length === 0) return state;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Sửa vốn góp cổ đông',
+    detail: `${actor.name} đã sửa vốn góp cổ đông '${prev.name}': ${diffs.join('; ')}`,
+    oldValue: formatCompactVND(prev.contribution),
+    newValue: formatCompactVND(updated.contribution),
+  });
+
+  return {
+    ...state,
+    shareholders: state.shareholders.map((s) => (s.id === shareholderId ? updated : s)),
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function deleteShareholderWithAudit(
+  state: AppState,
+  shareholderId: string,
+  actor: ActorIdentity
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return {
+      ok: false,
+      error: 'Chỉ Admin (Ngân) mới có quyền xóa vĩnh viễn cổ đông góp vốn.',
+    };
+  }
+  const target = state.shareholders.find((s) => s.id === shareholderId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy cổ đông cần xóa.' };
+  }
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Xóa cổ đông góp vốn',
+    detail: `${actor.name} đã xóa cổ đông '${target.name}' (Vốn góp: ${formatCompactVND(target.contribution)})`,
+    oldValue: `${target.name} (${formatCompactVND(target.contribution)})`,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      shareholders: state.shareholders.filter((s) => s.id !== shareholderId),
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function saveProductWithAudit(
+  state: AppState,
+  productInput: Omit<Product, 'id'> & { id?: string },
+  actor: ActorIdentity
+): AppState {
+  if (productInput.id) {
+    const prev = state.products.find((p) => p.id === productInput.id);
+    if (!prev) return state;
+
+    const updated: Product = {
+      ...prev,
+      ...productInput,
+      id: prev.id,
+    };
+
+    const diffs: string[] = [];
+    const oldVals: string[] = [];
+    const newVals: string[] = [];
+
+    if (prev.code !== updated.code) {
+      diffs.push(`mã từ '${prev.code}' thành '${updated.code}'`);
+    }
+    if (prev.name !== updated.name) {
+      diffs.push(`tên từ '${prev.name}' thành '${updated.name}'`);
+    }
+    if (prev.brand !== updated.brand) {
+      diffs.push(`nhánh từ '${prev.brand}' thành '${updated.brand}'`);
+    }
+    if (prev.costPrice !== updated.costPrice) {
+      diffs.push(
+        `giá nhập từ ${formatCompactVND(prev.costPrice)} thành ${formatCompactVND(updated.costPrice)}`
+      );
+      oldVals.push(`Nhập ${formatCompactVND(prev.costPrice)}`);
+      newVals.push(`Nhập ${formatCompactVND(updated.costPrice)}`);
+    }
+    if (prev.sellPrice !== updated.sellPrice) {
+      diffs.push(
+        `giá bán từ ${formatCompactVND(prev.sellPrice)} thành ${formatCompactVND(updated.sellPrice)}`
+      );
+      oldVals.push(`Bán ${formatCompactVND(prev.sellPrice)}`);
+      newVals.push(`Bán ${formatCompactVND(updated.sellPrice)}`);
+    }
+
+    for (const s of ALL_SIZES) {
+      const prevQty = prev.initialStock[s] ?? 0;
+      const nextQty = updated.initialStock[s] ?? 0;
+      if (prevQty !== nextQty) {
+        diffs.push(`tồn đầu Size ${s} từ ${prevQty} thành ${nextQty}`);
+        oldVals.push(`${s}:${prevQty}`);
+        newVals.push(`${s}:${nextQty}`);
+      }
+    }
+
+    if (diffs.length === 0) return state;
+
+    const log = createAuditEntry({
+      actor,
+      category: 'Kho hàng',
+      action: 'Sửa mẫu & tồn kho',
+      detail: `${actor.name} đã sửa mẫu ${updated.code} (${updated.name}): ${diffs.join('; ')}`,
+      oldValue: oldVals.join(' · ') || undefined,
+      newValue: newVals.join(' · ') || undefined,
+    });
+
+    return {
+      ...state,
+      products: state.products.map((p) => (p.id === prev.id ? updated : p)),
+      auditLogs: [log, ...state.auditLogs],
+    };
+  }
+
+  const newProduct: Product = {
+    ...productInput,
+    id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Thêm mẫu mới',
+    detail: `${actor.name} đã thêm mẫu ${newProduct.code} · ${newProduct.name} (${newProduct.brand}, giá bán ${formatCompactVND(newProduct.sellPrice)})`,
+  });
+
+  return {
+    ...state,
+    products: [newProduct, ...state.products],
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function addStockImportWithAudit(
+  state: AppState,
+  imp: Omit<StockImport, 'id' | 'enteredBy'>,
+  alsoRecordCashExpense: boolean,
+  actor: ActorIdentity
+): AppState {
+  const newImport: StockImport = {
+    ...imp,
+    id: `imp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    enteredBy: actor.name,
+  };
+  const product = state.products.find((p) => p.id === imp.productId);
+  const nextExpenses = [...state.expenses];
+
+  if (alsoRecordCashExpense && product) {
+    nextExpenses.unshift({
+      id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      date: imp.date,
+      category: 'Nhập hàng',
+      brandScope: product.brand,
+      detail: `Nhập kho ${product.code} (${imp.size}) × ${imp.quantity}`,
+      amount: imp.quantity * imp.unitCost,
+      paidBy: actor.name === 'Hoa' ? 'Hoa thanh toán' : `${actor.name} chi`,
+      receiptNote: imp.note || 'Phiếu nhập kho',
+      status: ExpenseStatus.COMPLETED,
+      enteredBy: actor.name,
+    });
+  }
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Nhập kho mới',
+    detail: `${actor.name} đã nhập kho +${imp.quantity} ${
+      product ? `${product.code} · ${product.name}` : imp.productId
+    } (Size ${imp.size}) · Đơn giá ${formatCompactVND(imp.unitCost)}`,
+  });
+
+  return {
+    ...state,
+    stockImports: [newImport, ...state.stockImports],
+    expenses: nextExpenses,
+    auditLogs: [log, ...state.auditLogs],
   };
 }
 
 export function exportStateToJSON(state: AppState): string {
   return JSON.stringify(
     {
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       data: state,
     },
@@ -700,7 +1423,23 @@ function normalizeImportedOrder(o: Partial<Order> & Record<string, unknown>): Or
     paymentStatus: (o.paymentStatus as PaymentStatus) ?? PaymentStatus.UNPAID,
     isCancelled: Boolean(o.isCancelled),
     createdAt: String(o.createdAt ?? ''),
+    createdBy: String(o.createdBy ?? 'Hệ thống'),
+    paymentConfirmedBy: o.paymentConfirmedBy ? String(o.paymentConfirmedBy) : undefined,
+    paymentConfirmedAt: o.paymentConfirmedAt ? String(o.paymentConfirmedAt) : undefined,
+    cancelledBy: o.cancelledBy ? String(o.cancelledBy) : undefined,
+    cancelledAt: o.cancelledAt ? String(o.cancelledAt) : undefined,
   };
+}
+
+function defaultFallbackAccounts(): UserAccount[] {
+  const createdAt = '2026-11-01T08:00:00.000Z';
+  return [
+    { id: 'acc_ngan', name: 'Ngân', username: 'ngan', role: 'Admin', pin: '1234', createdAt },
+    { id: 'acc_giang', name: 'Giang', username: 'giang', role: 'Thành viên', pin: '1234', createdAt },
+    { id: 'acc_hoa', name: 'Hoa', username: 'hoa', role: 'Thành viên', pin: '1234', createdAt },
+    { id: 'acc_phuong', name: 'Phương', username: 'phuong', role: 'Thành viên', pin: '1234', createdAt },
+    { id: 'acc_linh', name: 'Linh', username: 'linh', role: 'Thành viên', pin: '1234', createdAt },
+  ];
 }
 
 export function parseImportedJSON(
@@ -723,6 +1462,13 @@ export function parseImportedJSON(
         error: 'Cấu trúc file JSON không hợp lệ. Thiếu các bảng dữ liệu chuẩn.',
       };
     }
+    const accounts =
+      Array.isArray(candidate.accounts) && candidate.accounts.length > 0
+        ? (candidate.accounts as UserAccount[])
+        : defaultFallbackAccounts();
+    const auditLogs = Array.isArray(candidate.auditLogs)
+      ? (candidate.auditLogs as AuditLogEntry[])
+      : [];
     return {
       ok: true,
       state: {
@@ -732,6 +1478,8 @@ export function parseImportedJSON(
         shareholders: candidate.shareholders,
         expenses: candidate.expenses,
         budgetItems: candidate.budgetItems,
+        accounts,
+        auditLogs,
         isSampleData: Boolean(candidate.isSampleData),
       },
     };
@@ -752,6 +1500,7 @@ export function exportOrdersToCSV(orders: Order[]): string {
   const header = [
     'Mã đơn',
     'Ngày đặt',
+    'Người tạo đơn',
     'Nhánh',
     'Khách hàng',
     'Số điện thoại',
@@ -764,6 +1513,7 @@ export function exportOrdersToCSV(orders: Order[]): string {
     'Tổng thu (VND)',
     'Tiền thu hộ COD (VND)',
     'Thanh toán',
+    'Xác nhận thanh toán bởi',
     'Tình trạng',
     'Ghi chú',
   ].join(',');
@@ -775,6 +1525,7 @@ export function exportOrdersToCSV(orders: Order[]): string {
     return [
       escapeCSV(o.code),
       escapeCSV(o.date),
+      escapeCSV(o.createdBy || 'Hệ thống'),
       escapeCSV(o.brand),
       escapeCSV(o.customerName),
       escapeCSV(o.customerPhone),
@@ -787,6 +1538,7 @@ export function exportOrdersToCSV(orders: Order[]): string {
       escapeCSV(getOrderTotal(o)),
       escapeCSV(getOrderCOD(o)),
       escapeCSV(o.paymentStatus),
+      escapeCSV(o.paymentConfirmedBy || ''),
       escapeCSV(o.isCancelled ? 'Đã hủy' : 'Hoạt động'),
       escapeCSV(o.note),
     ].join(',');

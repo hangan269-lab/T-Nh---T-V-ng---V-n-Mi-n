@@ -26,8 +26,10 @@ import {
   ShippingMethod,
   ShippingStatus,
   SizeOption,
+  UserAccount,
 } from '../types/erp';
 import {
+  formatAuditTimestamp,
   formatDateVN,
   formatVND,
   getAvailableStock,
@@ -44,6 +46,7 @@ type OrderFilter = 'all' | 'today' | 'unpaid' | 'paid' | 'vtp_not_sent';
 
 interface OrdersTabProps {
   state: AppState;
+  currentUser: UserAccount;
   isCreateOpen: boolean;
   onOpenCreate: () => void;
   onCloseCreate: () => void;
@@ -66,6 +69,7 @@ interface DraftLine {
 
 export const OrdersTab: React.FC<OrdersTabProps> = ({
   state,
+  currentUser,
   isCreateOpen,
   onOpenCreate,
   onCloseCreate,
@@ -79,6 +83,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
 }) => {
   const todayISO = getTodayISO();
   const [filter, setFilter] = useState<OrderFilter>('all');
+  const [creatorFilter, setCreatorFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
 
@@ -306,6 +311,19 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     [state.orders]
   );
 
+  const creatorStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const acc of state.accounts) {
+      counts.set(acc.name, 0);
+    }
+    for (const o of state.orders) {
+      if (o.isCancelled) continue;
+      const name = o.createdBy || 'Hệ thống';
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).map(([name, count]) => ({ name, count }));
+  }, [state.accounts, state.orders]);
+
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return state.orders.filter((order) => {
@@ -322,16 +340,21 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
       )
         return false;
 
+      if (creatorFilter !== 'all' && (order.createdBy || 'Hệ thống') !== creatorFilter) {
+        return false;
+      }
+
       if (q) {
         const matchName = order.customerName.toLowerCase().includes(q);
         const matchPhone = order.customerPhone.toLowerCase().includes(q);
         const matchCode = order.code.toLowerCase().includes(q);
         const matchAddr = order.shippingAddress.toLowerCase().includes(q);
-        if (!matchName && !matchPhone && !matchCode && !matchAddr) return false;
+        const matchCreator = (order.createdBy || '').toLowerCase().includes(q);
+        if (!matchName && !matchPhone && !matchCode && !matchAddr && !matchCreator) return false;
       }
       return true;
     });
-  }, [state.orders, filter, searchQuery, todayISO]);
+  }, [state.orders, filter, creatorFilter, searchQuery, todayISO]);
 
   const selectableVisibleIds = useMemo(
     () => filteredOrders.filter((o) => !o.isCancelled).map((o) => o.id),
@@ -412,7 +435,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                 Tạo đơn hàng mới
               </h2>
               <p className="mt-0.5 text-xs text-[#57605E]">
-                Tự động trừ tồn kho, tính tiền thu hộ COD và hạch toán cước vận chuyển vào Quỹ tiền mặt.
+                Người tạo đơn: <strong className="text-[#0D4F43]">{currentUser.name}</strong> (tự động ghi nhận theo tài khoản đang đăng nhập) · Tự động trừ tồn kho, tính COD và hạch toán cước VC.
               </p>
             </div>
             <button
@@ -960,48 +983,87 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
           </div>
         )}
 
-        {/* Filter bar + Search */}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-          <div
-            className="flex flex-wrap items-center gap-1 rounded-lg bg-[#F3EFE6] p-1"
-            role="group"
-            aria-label="Bộ lọc đơn hàng"
-          >
-            {(
-              [
-                { id: 'all', label: 'Tất cả' },
-                { id: 'today', label: 'Hôm nay' },
-                { id: 'vtp_not_sent', label: 'Đơn Viettel Post chưa gửi' },
-                { id: 'unpaid', label: 'Chưa thanh toán' },
-                { id: 'paid', label: 'Đã thanh toán' },
-              ] as const
-            ).map((tab) => (
+        {/* Filter bar + Member filter + Search */}
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div
+              className="flex flex-wrap items-center gap-1 rounded-lg bg-[#F3EFE6] p-1"
+              role="group"
+              aria-label="Bộ lọc đơn hàng"
+            >
+              {(
+                [
+                  { id: 'all', label: 'Tất cả' },
+                  { id: 'today', label: 'Hôm nay' },
+                  { id: 'vtp_not_sent', label: 'Đơn Viettel Post chưa gửi' },
+                  { id: 'unpaid', label: 'Chưa thanh toán' },
+                  { id: 'paid', label: 'Đã thanh toán' },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  aria-pressed={filter === tab.id}
+                  onClick={() => setFilter(tab.id)}
+                  className={`rounded-md px-3 py-1.5 text-xs whitespace-nowrap shrink-0 ${
+                    filter === tab.id
+                      ? 'bg-white font-semibold text-[#0D4F43] shadow-xs border border-[#E4DFD5]'
+                      : 'font-medium text-[#57605E] hover:text-[#1A1F1E] border border-transparent'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#57605E]" />
+              <input
+                type="search"
+                aria-label="Tìm theo tên, SĐT, địa chỉ, người tạo hoặc mã đơn"
+                placeholder="Tìm tên, SĐT, địa chỉ, mã đơn..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] py-2 pl-9 pr-3 text-sm text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-[#0D4F43] focus:bg-white focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-[#57605E]">Lọc theo người tạo đơn:</span>
+            <div
+              className="flex flex-wrap items-center gap-1 rounded-lg bg-[#F3EFE6] p-1"
+              role="group"
+              aria-label="Lọc đơn theo thành viên"
+            >
               <button
-                key={tab.id}
                 type="button"
-                aria-pressed={filter === tab.id}
-                onClick={() => setFilter(tab.id)}
-                className={`rounded-md px-3 py-1.5 text-xs whitespace-nowrap shrink-0 ${
-                  filter === tab.id
+                aria-pressed={creatorFilter === 'all'}
+                onClick={() => setCreatorFilter('all')}
+                className={`rounded-md px-2.5 py-1 text-xs whitespace-nowrap shrink-0 ${
+                  creatorFilter === 'all'
                     ? 'bg-white font-semibold text-[#0D4F43] shadow-xs border border-[#E4DFD5]'
                     : 'font-medium text-[#57605E] hover:text-[#1A1F1E] border border-transparent'
                 }`}
               >
-                {tab.label}
+                Tất cả ({state.orders.filter((o) => !o.isCancelled).length})
               </button>
-            ))}
-          </div>
-
-          <div className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#57605E]" />
-            <input
-              type="search"
-              aria-label="Tìm theo tên, SĐT, địa chỉ hoặc mã đơn"
-              placeholder="Tìm tên, SĐT, địa chỉ, mã đơn..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] py-2 pl-9 pr-3 text-sm text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-[#0D4F43] focus:bg-white focus:outline-none"
-            />
+              {creatorStats.map((m) => (
+                <button
+                  key={m.name}
+                  type="button"
+                  aria-pressed={creatorFilter === m.name}
+                  onClick={() => setCreatorFilter(m.name)}
+                  className={`rounded-md px-2.5 py-1 text-xs whitespace-nowrap shrink-0 ${
+                    creatorFilter === m.name
+                      ? 'bg-white font-semibold text-[#0D4F43] shadow-xs border border-[#E4DFD5]'
+                      : 'font-medium text-[#57605E] hover:text-[#1A1F1E] border border-transparent'
+                  }`}
+                >
+                  {m.name} ({m.count})
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -1025,7 +1087,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[1060px] text-left text-sm">
+            <table className="w-full min-w-[1140px] text-left text-sm">
               <thead>
                 <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
                   <th className="py-3 pr-2 w-9">
@@ -1038,6 +1100,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                     />
                   </th>
                   <th className="py-3 pr-3">Mã / Ngày</th>
+                  <th className="py-3 px-3">Người tạo</th>
                   <th className="py-3 px-3">Khách hàng &amp; Địa chỉ</th>
                   <th className="py-3 px-3">Nhánh &amp; Sản phẩm</th>
                   <th className="py-3 px-3">Vận chuyển &amp; Cước</th>
@@ -1079,6 +1142,13 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           <div className="mt-0.5 font-mono text-xs text-[#57605E] tabular-nums">
                             {formatDateVN(order.date)}
                           </div>
+                        </td>
+
+                        <td className="py-3.5 px-3 align-top whitespace-nowrap">
+                          <div className="text-xs font-semibold text-[#1A1F1E]">
+                            {order.createdBy || 'Hệ thống'}
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-[#57605E]">Người tạo đơn</div>
                         </td>
 
                         <td className="py-3.5 px-3 align-top max-w-[230px]">
@@ -1184,17 +1254,36 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           </div>
                         </td>
 
-                        <td className="py-3.5 px-3 align-top whitespace-nowrap">
+                        <td className="py-3.5 px-3 align-top">
                           {order.isCancelled ? (
-                            <span className="inline-flex items-center gap-1 rounded bg-[#F3EFE6] px-2 py-1 text-xs font-medium text-[#57605E] whitespace-nowrap">
-                              <XCircle className="h-3.5 w-3.5 shrink-0" />
-                              Đã hủy đơn
-                            </span>
+                            <div>
+                              <span className="inline-flex items-center gap-1 rounded bg-[#F3EFE6] px-2 py-1 text-xs font-medium text-[#57605E] whitespace-nowrap">
+                                <XCircle className="h-3.5 w-3.5 shrink-0" />
+                                Đã hủy đơn
+                              </span>
+                              {order.cancelledBy && (
+                                <div className="mt-1 text-[11px] text-[#57605E]">
+                                  Đã hủy bởi <strong className="text-[#1A1F1E]">{order.cancelledBy}</strong>
+                                  {order.cancelledAt ? ` lúc ${formatAuditTimestamp(order.cancelledAt)}` : ''}
+                                </div>
+                              )}
+                            </div>
                           ) : isPaid ? (
-                            <span className="inline-flex items-center gap-1 rounded bg-[#0D4F43]/10 px-2 py-1 text-xs font-medium text-[#0D4F43] whitespace-nowrap">
-                              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                              Đã thanh toán
-                            </span>
+                            <div>
+                              <span className="inline-flex items-center gap-1 rounded bg-[#0D4F43]/10 px-2 py-1 text-xs font-medium text-[#0D4F43] whitespace-nowrap">
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                                Đã thanh toán
+                              </span>
+                              {order.paymentConfirmedBy && (
+                                <div className="mt-1 text-[11px] text-[#57605E]">
+                                  Đã xác nhận thanh toán bởi{' '}
+                                  <strong className="text-[#1A1F1E]">{order.paymentConfirmedBy}</strong>
+                                  {order.paymentConfirmedAt
+                                    ? ` lúc ${formatAuditTimestamp(order.paymentConfirmedAt)}`
+                                    : ''}
+                                </div>
+                              )}
+                            </div>
                           ) : (
                             <span className="inline-flex items-center gap-1 rounded bg-[#FEF3C7] px-2 py-1 text-xs font-medium text-[#92400E] whitespace-nowrap">
                               <Clock className="h-3.5 w-3.5 shrink-0" />
@@ -1231,7 +1320,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       {/* Inline editor row for shipping cost / address / weight */}
                       {isEditingThis && (
                         <tr className="bg-[#FAF8F4]">
-                          <td colSpan={8} className="px-4 py-4">
+                          <td colSpan={9} className="px-4 py-4">
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6 sm:items-end">
                               <div className="lg:col-span-2">
                                 <label

@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ActorIdentity,
+  addExpenseWithAudit,
+  addStockImportWithAudit,
+  authenticateUser,
   cancelOrder,
+  changeUserPinWithAudit,
   computeBrandPnL,
   computeBudgetSummary,
   computeFundSummary,
@@ -9,6 +14,9 @@ import {
   computeTodayStats,
   confirmOrderPayment,
   createOrderWithValidation,
+  createUserAccountWithAudit,
+  deleteExpenseWithAudit,
+  deleteShareholderWithAudit,
   exportOrdersToCSV,
   exportStateToJSON,
   exportViettelPostCSV,
@@ -18,8 +26,11 @@ import {
   getTodayISO,
   markOrdersShippingStatus,
   parseImportedJSON,
+  saveProductWithAudit,
   toggleExpenseStatus,
+  updateExpenseWithAudit,
   updateOrderShipping,
+  updateShareholderWithAudit,
 } from './finance';
 import { createSeedState } from '../data/seedData';
 import {
@@ -246,4 +257,188 @@ test('Viettel Post CSV export formats 9 columns with UTF-8 BOM and batch status 
   assert.equal(parsed.ok, true);
   const csv = exportOrdersToCSV(seed.orders);
   assert.ok(csv.includes('DH-0001'));
+});
+
+test('authentication, account creation, PIN change, and RBAC deletion rules work accurately', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  assert.equal(seed.accounts.length, 5);
+
+  const okLogin = authenticateUser(seed.accounts, 'giang', '1234');
+  assert.equal(okLogin.ok, true);
+  if (!okLogin.ok) return;
+  assert.equal(okLogin.account.name, 'Giang');
+  assert.equal(okLogin.account.role, 'Thành viên');
+
+  const badLogin = authenticateUser(seed.accounts, 'Ngân', '9999');
+  assert.equal(badLogin.ok, false);
+
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+  const giangActor: ActorIdentity = { id: 'acc_giang', name: 'Giang', role: 'Thành viên' };
+
+  // Member cannot create account
+  const memberCreate = createUserAccountWithAudit(
+    seed,
+    { name: 'Minh', username: 'minh', role: 'Thành viên', pin: '5678' },
+    giangActor
+  );
+  assert.equal(memberCreate.ok, false);
+
+  // Admin creates account
+  const adminCreate = createUserAccountWithAudit(
+    seed,
+    { name: 'Minh', username: 'minh', role: 'Thành viên', pin: '5678' },
+    nganActor
+  );
+  assert.equal(adminCreate.ok, true);
+  if (!adminCreate.ok) return;
+  assert.equal(adminCreate.state.accounts.length, 6);
+  assert.ok(adminCreate.state.auditLogs[0].detail.includes('Ngân đã tạo tài khoản "Minh"'));
+
+  // Giang changes own PIN
+  const pinChanged = changeUserPinWithAudit(
+    adminCreate.state,
+    'acc_giang',
+    '4321',
+    giangActor,
+    '1234'
+  );
+  assert.equal(pinChanged.ok, true);
+  if (!pinChanged.ok) return;
+  assert.equal(authenticateUser(pinChanged.state.accounts, 'Giang', '1234').ok, false);
+  assert.equal(authenticateUser(pinChanged.state.accounts, 'Giang', '4321').ok, true);
+
+  // RBAC: Giang cannot delete expense or shareholder permanently; Ngân can
+  const blockedDeleteExp = deleteExpenseWithAudit(pinChanged.state, 'exp_01', giangActor);
+  assert.equal(blockedDeleteExp.ok, false);
+  const blockedDeleteSh = deleteShareholderWithAudit(pinChanged.state, 'sh_01', giangActor);
+  assert.equal(blockedDeleteSh.ok, false);
+
+  const allowedDeleteExp = deleteExpenseWithAudit(pinChanged.state, 'exp_01', nganActor);
+  assert.equal(allowedDeleteExp.ok, true);
+  if (!allowedDeleteExp.ok) return;
+  assert.ok(allowedDeleteExp.state.auditLogs[0].detail.includes('xóa vĩnh viễn khoản chi'));
+});
+
+test('order creator, payment confirmation attribution, and finance/inventory edit audit diffs are recorded', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const giangActor: ActorIdentity = { id: 'acc_giang', name: 'Giang', role: 'Thành viên' };
+  const phuongActor: ActorIdentity = { id: 'acc_phuong', name: 'Phương', role: 'Thành viên' };
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+
+  // Giang creates order
+  const created = createOrderWithValidation(
+    seed,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Chị Lan',
+      customerPhone: '0912345678',
+      shippingAddress: '88 Phố Huế, Hai Bà Trưng, Hà Nội',
+      shippingMethod: ShippingMethod.VIETTEL_POST,
+      shopShippingCost: 30000,
+      items: [{ productId: 'prd_tn_03', size: 'M', quantity: 1 }],
+      shippingFee: 0,
+      note: '',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    giangActor
+  );
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(created.order.createdBy, 'Giang');
+  assert.ok(created.state.auditLogs[0].detail.includes('Giang đã tạo đơn hàng'));
+
+  // Ngân confirms payment
+  const paid = confirmOrderPayment(created.state, created.order.id, nganActor);
+  const paidOrder = paid.orders.find((o) => o.id === created.order.id)!;
+  assert.equal(paidOrder.paymentConfirmedBy, 'Ngân');
+  assert.ok(paidOrder.paymentConfirmedAt);
+  assert.ok(paid.auditLogs[0].detail.includes('Ngân đã xác nhận ĐÃ THANH TOÁN'));
+
+  // Phương edits an expense and records old -> new diff
+  const addedExp = addExpenseWithAudit(
+    paid,
+    {
+      date: '2026-11-16',
+      category: 'Sản xuất/Chụp ảnh',
+      brandScope: 'Dùng chung',
+      detail: 'Tiền studio',
+      amount: 1200000,
+      paidBy: 'Phương chi',
+      receiptNote: '',
+      status: ExpenseStatus.COMPLETED,
+    },
+    phuongActor
+  );
+  const studioExp = addedExp.expenses.find((e) => e.detail === 'Tiền studio')!;
+  assert.equal(studioExp.enteredBy, 'Phương');
+
+  const editedExp = updateExpenseWithAudit(
+    addedExp,
+    studioExp.id,
+    { amount: 1413000 },
+    phuongActor
+  );
+  assert.ok(
+    editedExp.auditLogs[0].detail.includes('Phương đã sửa khoản chi') &&
+      editedExp.auditLogs[0].detail.includes('1.200.000đ') &&
+      editedExp.auditLogs[0].detail.includes('1.413.000đ')
+  );
+
+  // Edit shareholder & product price & stock import
+  const editedSh = updateShareholderWithAudit(
+    editedExp,
+    'sh_02',
+    { contribution: 7500000 },
+    nganActor
+  );
+  assert.ok(editedSh.auditLogs[0].detail.includes('6.000.000đ') && editedSh.auditLogs[0].detail.includes('7.500.000đ'));
+
+  const targetProduct = editedSh.products.find((p) => p.id === 'prd_tn_01')!;
+  const editedProd = saveProductWithAudit(
+    editedSh,
+    { ...targetProduct, sellPrice: 1550000 },
+    phuongActor
+  );
+  assert.ok(
+    editedProd.auditLogs[0].detail.includes('giá bán từ 1.450.000đ thành 1.550.000đ')
+  );
+
+  const imported = addStockImportWithAudit(
+    editedProd,
+    {
+      date: '2026-11-16',
+      productId: 'prd_tn_01',
+      size: 'M',
+      quantity: 3,
+      unitCost: 680000,
+      note: 'Bổ sung',
+    },
+    false,
+    giangActor
+  );
+  assert.equal(imported.stockImports[0].enteredBy, 'Giang');
+  assert.ok(imported.auditLogs[0].detail.includes('Giang đã nhập kho +3 TN-01'));
+});
+
+test('parseImportedJSON migrates legacy JSON backups without accounts or auditLogs', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const legacyPayload = JSON.stringify({
+    version: 2,
+    data: {
+      products: seed.products,
+      stockImports: seed.stockImports,
+      orders: seed.orders.map(({ createdBy: _cb, ...rest }) => rest),
+      shareholders: seed.shareholders,
+      expenses: seed.expenses,
+      budgetItems: seed.budgetItems,
+      isSampleData: true,
+    },
+  });
+  const res = parseImportedJSON(legacyPayload);
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.state.accounts.length, 5);
+  assert.deepEqual(res.state.auditLogs, []);
+  assert.equal(res.state.orders[0].createdBy, 'Hệ thống');
 });
