@@ -1,4 +1,3 @@
-import type { User } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -12,7 +11,7 @@ import {
   writeBatch,
   Unsubscribe,
 } from 'firebase/firestore';
-import { createSeedState } from '../data/seedData';
+import { createDefaultAccounts, createSeedState, getDefaultPinForAccount } from '../data/seedData';
 import { db } from '../firebase';
 import {
   AppState,
@@ -29,16 +28,14 @@ import { handleFirestoreError, OperationType } from './firestoreError';
 import {
   BUSINESS_COLLECTIONS,
   BusinessCollectionName,
-  computeMemberEmails,
   computeStateDiffOps,
   sanitizeEntityForCollection,
   SYSTEM_META_DOC_ID,
-  WORKSPACE_ADMIN_EMAIL,
+  WORKSPACE_ID,
 } from './firestoreSanitize';
 
 export interface FirestoreDocMeta {
-  ownerUid: string;
-  memberEmails: string[];
+  workspaceId: string;
   serverCreatedAt: unknown;
 }
 
@@ -48,8 +45,9 @@ function metaKey(col: string, id: string): string {
   return `${col}/${id}`;
 }
 
-function stripFirestoreMetaFields<T extends Record<string, unknown>>(raw: Record<string, unknown>): T {
+function stripFirestoreMetaFields<T = Record<string, unknown>>(raw: Record<string, unknown>): T {
   const {
+    workspaceId: _workspaceId,
     ownerUid: _ownerUid,
     memberEmails: _memberEmails,
     serverCreatedAt: _serverCreatedAt,
@@ -57,25 +55,6 @@ function stripFirestoreMetaFields<T extends Record<string, unknown>>(raw: Record
     ...rest
   } = raw;
   return rest as T;
-}
-
-export async function ensureAdminBootstrapped(user: User): Promise<void> {
-  if (!user.email || user.email.toLowerCase() !== WORKSPACE_ADMIN_EMAIL) {
-    return;
-  }
-  const adminRef = doc(db, 'admins', user.uid);
-  try {
-    const snap = await getDocFromServer(adminRef);
-    if (!snap.exists()) {
-      await setDoc(adminRef, {
-        email: user.email,
-        role: 'Admin',
-        serverCreatedAt: serverTimestamp(),
-      });
-    }
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `admins/${user.uid}`);
-  }
 }
 
 async function commitOperationsInBatches(
@@ -98,57 +77,123 @@ async function commitOperationsInBatches(
   }
 }
 
-export async function ensureWorkspaceSeeded(
-  user: User,
-  metaCache: FirestoreMetaCache
-): Promise<void> {
-  const userEmail = (user.email ?? '').trim().toLowerCase();
-  if (!userEmail) return;
+export async function ensureWorkspaceSeeded(metaCache: FirestoreMetaCache): Promise<void> {
+  // Check system/meta document directly first
+  let metaSnapExists = false;
+  let metaHasWorkspaceId = false;
 
-  await ensureAdminBootstrapped(user);
-
-  let systemEmpty = true;
   try {
-    const systemQuery = query(
-      collection(db, 'system'),
-      where('memberEmails', 'array-contains', userEmail)
-    );
-    const systemSnap = await getDocsFromServer(systemQuery);
-    systemEmpty = systemSnap.empty;
+    const metaDocSnap = await getDocFromServer(doc(db, 'system', SYSTEM_META_DOC_ID));
+    if (metaDocSnap.exists()) {
+      metaSnapExists = true;
+      const raw = metaDocSnap.data() as Record<string, unknown>;
+      metaHasWorkspaceId = raw.workspaceId === WORKSPACE_ID;
+      if (metaHasWorkspaceId) {
+        metaCache.set(metaKey('system', SYSTEM_META_DOC_ID), {
+          workspaceId: WORKSPACE_ID,
+          serverCreatedAt: raw.serverCreatedAt,
+        });
+      }
+    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.LIST, 'system');
+    handleFirestoreError(error, OperationType.GET, `system/${SYSTEM_META_DOC_ID}`);
   }
 
-  if (!systemEmpty) {
+  // If system/meta exists from the old schema (before workspaceId), migrate it + known default accounts
+  if (metaSnapExists && !metaHasWorkspaceId) {
+    const ts = serverTimestamp();
+    const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    try {
+      const metaDocSnap = await getDocFromServer(doc(db, 'system', SYSTEM_META_DOC_ID));
+      const rawMeta = (metaDocSnap.data() ?? {}) as Record<string, unknown>;
+      ops.push((batch) => {
+        batch.set(doc(db, 'system', SYSTEM_META_DOC_ID), {
+          id: SYSTEM_META_DOC_ID,
+          workspaceId: WORKSPACE_ID,
+          isSampleData: Boolean(rawMeta.isSampleData),
+          seeded: true,
+          serverCreatedAt: rawMeta.serverCreatedAt ?? ts,
+          serverUpdatedAt: ts,
+        });
+      });
+
+      const defaultAccounts = createDefaultAccounts();
+      for (const defAcc of defaultAccounts) {
+        const accSnap = await getDocFromServer(doc(db, 'accounts', defAcc.id));
+        if (accSnap.exists()) {
+          const rawAcc = accSnap.data() as Record<string, unknown>;
+          const cleaned = stripFirestoreMetaFields<UserAccount>(rawAcc);
+          const migratedPin = cleaned.pin === '1234' ? getDefaultPinForAccount(cleaned) : cleaned.pin;
+          const sanitized = sanitizeEntityForCollection('accounts', {
+            ...cleaned,
+            pin: migratedPin,
+          });
+          ops.push((batch) => {
+            batch.set(doc(db, 'accounts', defAcc.id), {
+              ...sanitized,
+              workspaceId: WORKSPACE_ID,
+              serverCreatedAt: rawAcc.serverCreatedAt ?? ts,
+              serverUpdatedAt: ts,
+            });
+          });
+        }
+      }
+
+      await commitOperationsInBatches(ops, OperationType.WRITE, 'workspace-migrate');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'workspace-migrate');
+    }
     return;
   }
 
-  // Also check if accounts already exist before seeding
+  if (metaSnapExists && metaHasWorkspaceId) {
+    // Also ensure default 5 accounts exist if collection was emptied externally
+    try {
+      const accSnap = await getDocsFromServer(
+        query(collection(db, 'accounts'), where('workspaceId', '==', WORKSPACE_ID))
+      );
+      if (accSnap.empty) {
+        const ts = serverTimestamp();
+        const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+        for (const acc of createDefaultAccounts()) {
+          const sanitized = sanitizeEntityForCollection('accounts', acc);
+          ops.push((batch) => {
+            batch.set(doc(db, 'accounts', acc.id), {
+              ...sanitized,
+              workspaceId: WORKSPACE_ID,
+              serverCreatedAt: ts,
+              serverUpdatedAt: ts,
+            });
+          });
+        }
+        await commitOperationsInBatches(ops, OperationType.CREATE, 'accounts-seed');
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'accounts');
+    }
+    return;
+  }
+
+  // Also check if accounts already exist with workspaceId before seeding full sample data
   let accountsEmpty = true;
   try {
-    const accQuery = query(
-      collection(db, 'accounts'),
-      where('memberEmails', 'array-contains', userEmail)
+    const accSnap = await getDocsFromServer(
+      query(collection(db, 'accounts'), where('workspaceId', '==', WORKSPACE_ID))
     );
-    const accSnap = await getDocsFromServer(accQuery);
     accountsEmpty = accSnap.empty;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, 'accounts');
   }
 
-  const memberEmails = computeMemberEmails([], userEmail);
-
   if (!accountsEmpty) {
-    // Workspace has data without system/meta; create system/meta preserving existing accounts
     const metaRef = doc(db, 'system', SYSTEM_META_DOC_ID);
     const ts = serverTimestamp();
     try {
       await setDoc(metaRef, {
         id: SYSTEM_META_DOC_ID,
+        workspaceId: WORKSPACE_ID,
         isSampleData: false,
         seeded: true,
-        ownerUid: user.uid,
-        memberEmails,
         serverCreatedAt: ts,
         serverUpdatedAt: ts,
       });
@@ -158,6 +203,7 @@ export async function ensureWorkspaceSeeded(
     return;
   }
 
+  // First-time seed: full sample ERP dataset + 5 team accounts with default PINs 1111..5555
   const seed = createSeedState();
   const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
   const ts = serverTimestamp();
@@ -166,10 +212,9 @@ export async function ensureWorkspaceSeeded(
     const metaRef = doc(db, 'system', SYSTEM_META_DOC_ID);
     batch.set(metaRef, {
       id: SYSTEM_META_DOC_ID,
+      workspaceId: WORKSPACE_ID,
       isSampleData: true,
       seeded: true,
-      ownerUid: user.uid,
-      memberEmails,
       serverCreatedAt: ts,
       serverUpdatedAt: ts,
     });
@@ -181,15 +226,13 @@ export async function ensureWorkspaceSeeded(
       const sanitized = sanitizeEntityForCollection(col, item);
       const id = String(sanitized.id);
       metaCache.set(metaKey(col, id), {
-        ownerUid: user.uid,
-        memberEmails,
+        workspaceId: WORKSPACE_ID,
         serverCreatedAt: ts,
       });
       operations.push((batch) => {
         batch.set(doc(db, col, id), {
           ...sanitized,
-          ownerUid: user.uid,
-          memberEmails,
+          workspaceId: WORKSPACE_ID,
           serverCreatedAt: ts,
           serverUpdatedAt: ts,
         });
@@ -201,21 +244,15 @@ export async function ensureWorkspaceSeeded(
 }
 
 export interface RealtimeWorkspaceCallbacks {
-  onStateChange: (nextState: AppState, meta: { memberEmails: string[]; syncing: boolean }) => void;
+  onStateChange: (nextState: AppState) => void;
   onReady: () => void;
   onError: (error: unknown) => void;
 }
 
 export function subscribeWorkspaceRealtime(
-  user: User,
   metaCache: FirestoreMetaCache,
   callbacks: RealtimeWorkspaceCallbacks
 ): Unsubscribe {
-  const userEmail = (user.email ?? '').trim().toLowerCase();
-  if (!userEmail) {
-    return () => {};
-  }
-
   const latestCollections: Record<BusinessCollectionName, unknown[]> = {
     products: [],
     stockImports: [],
@@ -228,7 +265,6 @@ export function subscribeWorkspaceRealtime(
   };
 
   let isSampleData = false;
-  let memberEmails = computeMemberEmails([], userEmail);
   const readySet = new Set<string>();
   const expectedCount = BUSINESS_COLLECTIONS.length + 1;
   let notifiedReady = false;
@@ -249,9 +285,19 @@ export function subscribeWorkspaceRealtime(
     const sortedProducts = [...(latestCollections.products as Product[])].sort((a, b) =>
       a.code.localeCompare(b.code)
     );
-    const sortedAccounts = [...(latestCollections.accounts as UserAccount[])].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt)
-    );
+    const TEAM_ORDER: Record<string, number> = {
+      ngan: 0,
+      giang: 1,
+      hoa: 2,
+      phuong: 3,
+      linh: 4,
+    };
+    const sortedAccounts = [...(latestCollections.accounts as UserAccount[])].sort((a, b) => {
+      const rankA = TEAM_ORDER[a.username.toLowerCase()] ?? 99;
+      const rankB = TEAM_ORDER[b.username.toLowerCase()] ?? 99;
+      if (rankA !== rankB) return rankA - rankB;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
 
     const nextState: AppState = {
       products: sortedProducts,
@@ -265,7 +311,7 @@ export function subscribeWorkspaceRealtime(
       isSampleData,
     };
 
-    callbacks.onStateChange(nextState, { memberEmails, syncing: false });
+    callbacks.onStateChange(nextState);
 
     if (!notifiedReady && readySet.size >= expectedCount) {
       notifiedReady = true;
@@ -275,10 +321,9 @@ export function subscribeWorkspaceRealtime(
 
   const unsubscribes: Unsubscribe[] = [];
 
-  // Subscribe to system metadata
   const sysQuery = query(
     collection(db, 'system'),
-    where('memberEmails', 'array-contains', userEmail)
+    where('workspaceId', '==', WORKSPACE_ID)
   );
   unsubscribes.push(
     onSnapshot(
@@ -288,12 +333,10 @@ export function subscribeWorkspaceRealtime(
         if (metaDoc) {
           const raw = metaDoc.data() as Record<string, unknown>;
           metaCache.set(metaKey('system', metaDoc.id), {
-            ownerUid: String(raw.ownerUid ?? user.uid),
-            memberEmails: computeMemberEmails(raw.memberEmails as string[] | undefined, userEmail),
+            workspaceId: WORKSPACE_ID,
             serverCreatedAt: raw.serverCreatedAt,
           });
           isSampleData = Boolean(raw.isSampleData);
-          memberEmails = computeMemberEmails(raw.memberEmails as string[] | undefined, userEmail);
         }
         readySet.add('system');
         emit();
@@ -308,12 +351,8 @@ export function subscribeWorkspaceRealtime(
     )
   );
 
-  // Subscribe to all 8 business collections in real time
   for (const col of BUSINESS_COLLECTIONS) {
-    const colQuery = query(
-      collection(db, col),
-      where('memberEmails', 'array-contains', userEmail)
-    );
+    const colQuery = query(collection(db, col), where('workspaceId', '==', WORKSPACE_ID));
     unsubscribes.push(
       onSnapshot(
         colQuery,
@@ -322,11 +361,7 @@ export function subscribeWorkspaceRealtime(
           for (const docSnap of snapshot.docs) {
             const raw = docSnap.data() as Record<string, unknown>;
             metaCache.set(metaKey(col, docSnap.id), {
-              ownerUid: String(raw.ownerUid ?? user.uid),
-              memberEmails: computeMemberEmails(
-                raw.memberEmails as string[] | undefined,
-                userEmail
-              ),
+              workspaceId: WORKSPACE_ID,
               serverCreatedAt: raw.serverCreatedAt,
             });
             items.push(stripFirestoreMetaFields(raw));
@@ -356,8 +391,6 @@ export function subscribeWorkspaceRealtime(
 export async function commitStateDiffToFirestore(
   prevState: AppState,
   nextState: AppState,
-  user: User,
-  memberEmails: string[],
   metaCache: FirestoreMetaCache
 ): Promise<void> {
   const diff = computeStateDiffOps(prevState, nextState);
@@ -365,29 +398,25 @@ export async function commitStateDiffToFirestore(
     return;
   }
 
-  const normalizedEmails = computeMemberEmails(memberEmails, user.email);
   const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
   const nowServerTs = serverTimestamp();
 
   for (const op of diff.upserts) {
     const key = metaKey(op.collection, op.id);
     const cached = metaCache.get(key);
-    const ownerUid = cached?.ownerUid || user.uid;
     const hasResolvedCreatedAt =
       Boolean(cached?.serverCreatedAt) &&
       typeof (cached?.serverCreatedAt as { toMillis?: unknown })?.toMillis === 'function';
 
     if (op.isCreate || !cached) {
       metaCache.set(key, {
-        ownerUid,
-        memberEmails: normalizedEmails,
+        workspaceId: WORKSPACE_ID,
         serverCreatedAt: nowServerTs,
       });
       operations.push((batch) => {
         batch.set(doc(db, op.collection, op.id), {
           ...op.data,
-          ownerUid,
-          memberEmails: normalizedEmails,
+          workspaceId: WORKSPACE_ID,
           serverCreatedAt: nowServerTs,
           serverUpdatedAt: nowServerTs,
         });
@@ -396,8 +425,7 @@ export async function commitStateDiffToFirestore(
       operations.push((batch) => {
         batch.set(doc(db, op.collection, op.id), {
           ...op.data,
-          ownerUid,
-          memberEmails: normalizedEmails,
+          workspaceId: WORKSPACE_ID,
           serverCreatedAt: cached.serverCreatedAt,
           serverUpdatedAt: nowServerTs,
         });
@@ -406,8 +434,7 @@ export async function commitStateDiffToFirestore(
       operations.push((batch) => {
         batch.update(doc(db, op.collection, op.id), {
           ...op.data,
-          ownerUid,
-          memberEmails: normalizedEmails,
+          workspaceId: WORKSPACE_ID,
           serverUpdatedAt: nowServerTs,
         });
       });
@@ -423,15 +450,13 @@ export async function commitStateDiffToFirestore(
 
   if (diff.updateSystemMeta) {
     const sysCached = metaCache.get(metaKey('system', SYSTEM_META_DOC_ID));
-    const sysOwner = sysCached?.ownerUid || user.uid;
     const sysCreated = sysCached?.serverCreatedAt || nowServerTs;
     operations.push((batch) => {
       batch.set(doc(db, 'system', SYSTEM_META_DOC_ID), {
         id: SYSTEM_META_DOC_ID,
+        workspaceId: WORKSPACE_ID,
         isSampleData: Boolean(nextState.isSampleData),
         seeded: true,
-        ownerUid: sysOwner,
-        memberEmails: normalizedEmails,
         serverCreatedAt: sysCreated,
         serverUpdatedAt: nowServerTs,
       });
@@ -439,40 +464,4 @@ export async function commitStateDiffToFirestore(
   }
 
   await commitOperationsInBatches(operations, OperationType.WRITE, 'workspace-sync');
-}
-
-export async function updateWorkspaceMemberEmails(
-  nextMemberEmails: string[],
-  currentState: AppState,
-  user: User,
-  metaCache: FirestoreMetaCache
-): Promise<string[]> {
-  const normalizedEmails = computeMemberEmails(nextMemberEmails, user.email);
-  const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
-  const nowServerTs = serverTimestamp();
-
-  operations.push((batch) => {
-    batch.update(doc(db, 'system', SYSTEM_META_DOC_ID), {
-      memberEmails: normalizedEmails,
-      serverUpdatedAt: nowServerTs,
-    });
-  });
-
-  for (const col of BUSINESS_COLLECTIONS) {
-    const list = currentState[col] as Array<{ id: string }>;
-    for (const item of list) {
-      const sanitized = sanitizeEntityForCollection(col, item);
-      const id = String(sanitized.id);
-      if (!metaCache.has(metaKey(col, id))) continue;
-      operations.push((batch) => {
-        batch.update(doc(db, col, id), {
-          memberEmails: normalizedEmails,
-          serverUpdatedAt: nowServerTs,
-        });
-      });
-    }
-  }
-
-  await commitOperationsInBatches(operations, OperationType.UPDATE, 'workspace-member-emails');
-  return normalizedEmails;
 }

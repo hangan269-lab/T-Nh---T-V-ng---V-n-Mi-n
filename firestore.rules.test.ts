@@ -3,14 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-interface MockAuth {
-  uid: string;
-  token: {
-    email?: string;
-    email_verified?: boolean;
-  };
-}
-
 function isValidId(id: unknown): boolean {
   return (
     typeof id === 'string' &&
@@ -20,25 +12,7 @@ function isValidId(id: unknown): boolean {
   );
 }
 
-function isVerifiedUser(auth: MockAuth | null): boolean {
-  return auth !== null && auth.token.email_verified === true;
-}
-
-function isWorkspaceMemberResource(
-  auth: MockAuth | null,
-  data: Record<string, unknown>
-): boolean {
-  if (!isVerifiedUser(auth) || !auth) return false;
-  const email = auth.token.email ?? null;
-  const memberEmails = Array.isArray(data.memberEmails) ? data.memberEmails : [];
-  return (
-    data.ownerUid === auth.uid ||
-    (email !== null && memberEmails.includes(email))
-  );
-}
-
 function validateOrderPayload(
-  auth: MockAuth | null,
   docId: unknown,
   data: Record<string, unknown>,
   options: {
@@ -47,18 +21,18 @@ function validateOrderPayload(
     requestTimeMs?: number;
   } = {}
 ): { allowed: boolean; reason?: string } {
-  if (!isVerifiedUser(auth) || !auth) {
-    return { allowed: false, reason: 'PERMISSION_DENIED: unauthenticated or unverified email' };
-  }
   if (!isValidId(docId)) {
     return { allowed: false, reason: 'PERMISSION_DENIED: invalid document ID' };
   }
+  if (data.workspaceId !== 'nhavuongmien_studio') {
+    return { allowed: false, reason: 'PERMISSION_DENIED: foreign or missing workspaceId' };
+  }
 
   const requiredKeys = [
-    'id', 'code', 'date', 'brand', 'customerName', 'customerPhone', 'shippingAddress',
+    'id', 'workspaceId', 'code', 'date', 'brand', 'customerName', 'customerPhone', 'shippingAddress',
     'shippingMethod', 'shopShippingCost', 'shippingCostPayer', 'shippingStatus',
     'weightGrams', 'items', 'shippingFee', 'note', 'paymentStatus', 'isCancelled',
-    'createdAt', 'createdBy', 'ownerUid', 'memberEmails', 'serverCreatedAt', 'serverUpdatedAt',
+    'createdAt', 'createdBy', 'serverCreatedAt', 'serverUpdatedAt',
   ];
   const allowedKeys = new Set([
     ...requiredKeys,
@@ -82,17 +56,16 @@ function validateOrderPayload(
     return { allowed: false, reason: 'PERMISSION_DENIED: items array out of bounds (1..30)' };
   }
   if (options.isCreate) {
-    if (data.ownerUid !== auth.uid) {
-      return { allowed: false, reason: 'PERMISSION_DENIED: ownerUid spoofing' };
-    }
     if (data.serverCreatedAt !== options.requestTimeMs || data.serverUpdatedAt !== options.requestTimeMs) {
       return { allowed: false, reason: 'PERMISSION_DENIED: forged timestamp' };
     }
   }
   if (options.existing) {
-    const isAdmin = auth.token.email === 'hangan269@gmail.com';
-    if (options.existing.isCancelled === true && !isAdmin) {
-      return { allowed: false, reason: 'PERMISSION_DENIED: terminal cancelled order lock' };
+    if (
+      'serverCreatedAt' in options.existing &&
+      data.serverCreatedAt !== options.existing.serverCreatedAt
+    ) {
+      return { allowed: false, reason: 'PERMISSION_DENIED: mutated serverCreatedAt' };
     }
     if (data.serverUpdatedAt !== options.requestTimeMs) {
       return { allowed: false, reason: 'PERMISSION_DENIED: forged update timestamp' };
@@ -101,14 +74,13 @@ function validateOrderPayload(
   return { allowed: true };
 }
 
-test('firestore.rules and firebase-blueprint.json exist and stay synchronized on all collections', () => {
+test('firestore.rules and firebase-blueprint.json stay synchronized without Google Auth gates', () => {
   const rulesText = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
   const blueprint = JSON.parse(
     fs.readFileSync(path.resolve(process.cwd(), 'firebase-blueprint.json'), 'utf8')
   ) as { firestore: Record<string, unknown> };
 
   const requiredMatches = [
-    'admins',
     'system',
     'products',
     'stockImports',
@@ -121,6 +93,8 @@ test('firestore.rules and firebase-blueprint.json exist and stay synchronized on
   ];
 
   assert.ok(rulesText.includes('allow read, write: if false;'));
+  assert.ok(rulesText.includes("nhavuongmien_studio"));
+  assert.equal(rulesText.includes('request.auth'), false);
   for (const col of requiredMatches) {
     assert.ok(
       Object.keys(blueprint.firestore).some((p) => p.startsWith(`/${col}/`)),
@@ -131,18 +105,13 @@ test('firestore.rules and firebase-blueprint.json exist and stay synchronized on
       `firestore.rules missing match block for ${col}`
     );
   }
-  assert.ok(rulesText.includes('hangan269@gmail.com'));
-  assert.ok(rulesText.includes('request.auth.token.email_verified == true'));
 });
 
-test('Dirty Dozen adversarial payloads all fail with PERMISSION_DENIED', () => {
+test('Adversarial payloads fail schema, size, path, workspace, and timestamp checks', () => {
   const serverNow = 1763370000000;
-  const adminAuth: MockAuth = {
-    uid: 'uid_admin',
-    token: { email: 'hangan269@gmail.com', email_verified: true },
-  };
   const validOrder: Record<string, unknown> = {
     id: 'ord_99',
+    workspaceId: 'nhavuongmien_studio',
     code: 'DH-0099',
     date: '2026-11-17',
     brand: 'Tơ Nhã',
@@ -170,59 +139,32 @@ test('Dirty Dozen adversarial payloads all fail with PERMISSION_DENIED', () => {
     isCancelled: false,
     createdAt: '2026-11-17T08:00:00Z',
     createdBy: 'Ngân',
-    ownerUid: 'uid_admin',
-    memberEmails: ['hangan269@gmail.com'],
     serverCreatedAt: serverNow,
     serverUpdatedAt: serverNow,
   };
 
   // Valid baseline passes
   assert.equal(
-    validateOrderPayload(adminAuth, 'ord_99', validOrder, {
+    validateOrderPayload('ord_99', validOrder, {
       isCreate: true,
       requestTimeMs: serverNow,
     }).allowed,
     true
   );
 
-  // 1. Unauthenticated read/write
-  assert.equal(isWorkspaceMemberResource(null, validOrder), false);
-
-  // 2. Email spoof with email_verified: false
+  // 1. Foreign workspaceId rejected
   assert.equal(
     validateOrderPayload(
-      { uid: 'uid_spoof', token: { email: 'hangan269@gmail.com', email_verified: false } },
       'ord_99',
-      validOrder,
+      { ...validOrder, workspaceId: 'foreign_workspace' },
       { isCreate: true, requestTimeMs: serverNow }
     ).allowed,
     false
   );
 
-  // 3. Foreign signed-in user PII scrape
-  assert.equal(
-    isWorkspaceMemberResource(
-      { uid: 'uid_stranger', token: { email: 'attacker@example.com', email_verified: true } },
-      validOrder
-    ),
-    false
-  );
-
-  // 4. Identity spoofing on create
+  // 2. Shadow / Ghost field injection rejected
   assert.equal(
     validateOrderPayload(
-      adminAuth,
-      'ord_99',
-      { ...validOrder, ownerUid: 'uid_other' },
-      { isCreate: true, requestTimeMs: serverNow }
-    ).allowed,
-    false
-  );
-
-  // 5. Shadow / Ghost field injection
-  assert.equal(
-    validateOrderPayload(
-      adminAuth,
       'ord_99',
       { ...validOrder, isVerifiedAdmin: true },
       { isCreate: true, requestTimeMs: serverNow }
@@ -230,19 +172,18 @@ test('Dirty Dozen adversarial payloads all fail with PERMISSION_DENIED', () => {
     false
   );
 
-  // 6. Path ID poisoning
+  // 3. Path ID poisoning rejected
   assert.equal(
-    validateOrderPayload(adminAuth, '../bad$id', validOrder, {
+    validateOrderPayload('../bad$id', validOrder, {
       isCreate: true,
       requestTimeMs: serverNow,
     }).allowed,
     false
   );
 
-  // 7. Resource exhaustion (>500 char address)
+  // 4. Resource exhaustion (>500 char address) rejected
   assert.equal(
     validateOrderPayload(
-      adminAuth,
       'ord_99',
       { ...validOrder, shippingAddress: 'A'.repeat(5000) },
       { isCreate: true, requestTimeMs: serverNow }
@@ -250,10 +191,9 @@ test('Dirty Dozen adversarial payloads all fail with PERMISSION_DENIED', () => {
     false
   );
 
-  // 8. Unbounded array (>30 items) & empty array
+  // 5. Unbounded array (>30 items) & empty array rejected
   assert.equal(
     validateOrderPayload(
-      adminAuth,
       'ord_99',
       { ...validOrder, items: Array.from({ length: 35 }, () => (validOrder.items as unknown[])[0]) },
       { isCreate: true, requestTimeMs: serverNow }
@@ -262,7 +202,6 @@ test('Dirty Dozen adversarial payloads all fail with PERMISSION_DENIED', () => {
   );
   assert.equal(
     validateOrderPayload(
-      adminAuth,
       'ord_99',
       { ...validOrder, items: [] },
       { isCreate: true, requestTimeMs: serverNow }
@@ -270,31 +209,20 @@ test('Dirty Dozen adversarial payloads all fail with PERMISSION_DENIED', () => {
     false
   );
 
-  // 9. Client timestamp forgery
+  // 6. Client timestamp forgery & immutable serverCreatedAt tampering rejected
   assert.equal(
     validateOrderPayload(
-      adminAuth,
       'ord_99',
       { ...validOrder, serverUpdatedAt: serverNow - 5000 },
       { isCreate: true, requestTimeMs: serverNow }
     ).allowed,
     false
   );
-
-  // 10. Terminal cancelled order mutation by non-admin
-  const staffAuth: MockAuth = {
-    uid: 'uid_staff',
-    token: { email: 'giang@example.com', email_verified: true },
-  };
   assert.equal(
     validateOrderPayload(
-      staffAuth,
       'ord_99',
-      { ...validOrder, note: 'reopen' },
-      {
-        existing: { ...validOrder, isCancelled: true },
-        requestTimeMs: serverNow,
-      }
+      { ...validOrder, serverCreatedAt: serverNow - 1000 },
+      { existing: validOrder, requestTimeMs: serverNow }
     ).allowed,
     false
   );

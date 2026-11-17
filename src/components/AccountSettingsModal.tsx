@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Cloud, Edit3, KeyRound, LogOut, MailPlus, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
+import { Edit3, KeyRound, RotateCcw, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
+import { getDefaultPinForAccount } from '../data/seedData';
 import { UserAccount, UserRole } from '../types/erp';
 
 interface AccountSettingsModalProps {
@@ -7,10 +8,6 @@ interface AccountSettingsModalProps {
   currentUser: UserAccount;
   accounts: UserAccount[];
   hasSystemData?: boolean;
-  firebaseUserEmail?: string | null;
-  memberEmails?: string[];
-  onGoogleSignOut?: () => void;
-  onUpdateMemberEmails?: (emails: string[]) => Promise<{ ok: true } | { ok: false; error: string }>;
   onClose: () => void;
   onChangePin: (
     targetUserId: string,
@@ -36,10 +33,6 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   currentUser,
   accounts,
   hasSystemData = true,
-  firebaseUserEmail,
-  memberEmails = [],
-  onGoogleSignOut,
-  onUpdateMemberEmails,
   onClose,
   onChangePin,
   onCreateAccount,
@@ -74,13 +67,6 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const [editAccPin, setEditAccPin] = useState('');
   const [deleteAccTarget, setDeleteAccTarget] = useState<UserAccount | null>(null);
 
-  // Admin: multi-device Google email sharing
-  const [newSyncEmail, setNewSyncEmail] = useState('');
-  const [syncEmailBusy, setSyncEmailBusy] = useState(false);
-  const [syncEmailMsg, setSyncEmailMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(
-    null
-  );
-
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -111,7 +97,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     setCurrentPin('');
     setNewPin('');
     setConfirmPin('');
-    setPinMsg({ type: 'success', text: 'Đã cập nhật mã PIN mới của bạn.' });
+    setPinMsg({ type: 'success', text: 'Đã cập nhật mã PIN mới của bạn và đồng bộ lên Firestore.' });
   };
 
   const handleCreateAccountSubmit = (e: React.FormEvent) => {
@@ -131,7 +117,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     setNewUsername('');
     setNewRole('Thành viên');
     setNewAccPin('');
-    setAccMsg({ type: 'success', text: 'Đã tạo tài khoản thành viên mới.' });
+    setAccMsg({ type: 'success', text: 'Đã tạo tài khoản thành viên mới và đồng bộ Firestore.' });
   };
 
   const handleAdminResetPin = (targetId: string) => {
@@ -143,7 +129,23 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     }
     setResetTargetId(null);
     setResetPinVal('');
-    setAccMsg({ type: 'success', text: 'Đã đặt lại mã PIN cho thành viên.' });
+    setAccMsg({ type: 'success', text: 'Đã đặt lại mã PIN mới cho thành viên.' });
+  };
+
+  const handleResetToDefaultPin = (acc: UserAccount) => {
+    setAccMsg(null);
+    const defaultPin = getDefaultPinForAccount(acc);
+    const res = onChangePin(acc.id, defaultPin);
+    if (!res.ok) {
+      setAccMsg({ type: 'error', text: res.error });
+      return;
+    }
+    setResetTargetId(null);
+    setResetPinVal('');
+    setAccMsg({
+      type: 'success',
+      text: `Đã đặt lại mã PIN của ${acc.name} về mặc định (${defaultPin}).`,
+    });
   };
 
   const openEditAccount = (acc: UserAccount) => {
@@ -198,48 +200,28 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
         <div className="flex items-start justify-between gap-4 border-b border-[#ECE7DD] pb-4">
           <div>
             <h2 id="account-settings-title" className="font-serif text-xl font-semibold text-[#1A1F1E]">
-              Cài đặt tài khoản &amp; Bảo mật
+              Cài đặt tài khoản &amp; Mã PIN
             </h2>
             <p className="mt-0.5 text-xs text-[#57605E]">
               Đang đăng nhập: <strong className="text-[#1A1F1E]">{currentUser.name}</strong> ·{' '}
               {currentUser.role === 'Admin' ? 'Admin / Quản lý' : 'Thành viên'}
-              {firebaseUserEmail ? (
-                <>
-                  {' · '}Cloud: <strong className="text-[#0D4F43]">{firebaseUserEmail}</strong>
-                </>
-              ) : null}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {onGoogleSignOut && firebaseUserEmail && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onGoogleSignOut();
-                }}
-                className="inline-flex items-center gap-1 rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#A63429] hover:bg-[#A63429]/5"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                Đổi Google
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Đóng cài đặt tài khoản"
-              className="rounded-lg p-1.5 text-[#57605E] transition-colors hover:bg-[#F3EFE6] hover:text-[#1A1F1E]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Đóng cài đặt tài khoản"
+            className="rounded-lg p-1.5 text-[#57605E] transition-colors hover:bg-[#F3EFE6] hover:text-[#1A1F1E]"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
         {/* Section 1: Đổi mật khẩu / mã PIN cá nhân */}
         <section className="mt-5">
           <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">
             <KeyRound className="h-4 w-4 text-[#0D4F43]" />
-            Đổi mã PIN / Mật khẩu của bạn
+            Đổi mã PIN 4 số của bạn
           </h3>
 
           {pinMsg && (
@@ -263,8 +245,10 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               <input
                 id="self-pin-current"
                 type="password"
+                inputMode="numeric"
+                maxLength={8}
                 value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value)}
+                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
                 placeholder="••••"
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm focus:border-[#0D4F43] focus:outline-none"
                 required
@@ -272,13 +256,15 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
             </div>
             <div>
               <label htmlFor="self-pin-new" className="block text-xs font-medium text-[#57605E]">
-                Mã PIN mới (từ 4 ký tự)
+                Mã PIN mới (4 số)
               </label>
               <input
                 id="self-pin-new"
                 type="password"
+                inputMode="numeric"
+                maxLength={4}
                 value={newPin}
-                onChange={(e) => setNewPin(e.target.value)}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 placeholder="Ví dụ: 5678"
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm focus:border-[#0D4F43] focus:outline-none"
                 required
@@ -291,8 +277,10 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               <input
                 id="self-pin-confirm"
                 type="password"
+                inputMode="numeric"
+                maxLength={4}
                 value={confirmPin}
-                onChange={(e) => setConfirmPin(e.target.value)}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 placeholder="••••"
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm focus:border-[#0D4F43] focus:outline-none"
                 required
@@ -314,7 +302,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
           <section className="mt-6 border-t border-[#ECE7DD] pt-6">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">
               <ShieldCheck className="h-4 w-4 text-[#0D4F43]" />
-              Quản lý tài khoản team (Quyền Admin)
+              Quản lý tài khoản team &amp; Đặt lại PIN (Quyền Admin)
             </h3>
 
             {accMsg && (
@@ -374,6 +362,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     const isLastAdmin = acc.role === 'Admin' && adminCount <= 1;
                     const cannotDelete = isSelf || isLastAdmin;
                     const isEditingThis = editAccId === acc.id;
+                    const defaultPin = getDefaultPinForAccount(acc);
                     return (
                       <React.Fragment key={acc.id}>
                         <tr>
@@ -402,10 +391,14 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                               <div className="inline-flex items-center gap-1.5">
                                 <input
                                   type="password"
+                                  inputMode="numeric"
+                                  maxLength={4}
                                   aria-label={`Mã PIN mới cho ${acc.name}`}
-                                  placeholder="PIN mới"
+                                  placeholder="PIN 4 số"
                                   value={resetPinVal}
-                                  onChange={(e) => setResetPinVal(e.target.value)}
+                                  onChange={(e) =>
+                                    setResetPinVal(e.target.value.replace(/\D/g, '').slice(0, 4))
+                                  }
                                   className="w-24 rounded border border-[#E4DFD5] px-2 py-1 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
                                 />
                                 <button
@@ -449,6 +442,15 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                                   className="rounded border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
                                 >
                                   Đổi PIN
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleResetToDefaultPin(acc)}
+                                  title={`Đặt lại về PIN mặc định (${defaultPin})`}
+                                  className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#0D4F43] hover:bg-[#0D4F43]/5"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  PIN mặc định ({defaultPin})
                                 </button>
                                 <button
                                   type="button"
@@ -532,9 +534,13 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                                   <input
                                     id={`edit-acc-pin-${acc.id}`}
                                     type="password"
+                                    inputMode="numeric"
+                                    maxLength={4}
                                     placeholder="Giữ nguyên nếu trống"
                                     value={editAccPin}
-                                    onChange={(e) => setEditAccPin(e.target.value)}
+                                    onChange={(e) =>
+                                      setEditAccPin(e.target.value.replace(/\D/g, '').slice(0, 4))
+                                    }
                                     className="mt-1 w-full rounded border border-[#E4DFD5] bg-white px-2 py-1.5 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
                                   />
                                 </div>
@@ -623,9 +629,11 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                   <input
                     id="new-acc-pin"
                     type="password"
+                    inputMode="numeric"
+                    maxLength={4}
                     value={newAccPin}
-                    onChange={(e) => setNewAccPin(e.target.value)}
-                    placeholder="1234"
+                    onChange={(e) => setNewAccPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="6666"
                     className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
                     required
                   />
@@ -640,110 +648,6 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 </button>
               </div>
             </form>
-
-            {onUpdateMemberEmails && (
-              <div className="mt-6 border-t border-[#ECE7DD] pt-5">
-                <h4 className="flex items-center gap-1.5 text-xs font-semibold text-[#1A1F1E]">
-                  <Cloud className="h-3.5 w-3.5 text-[#0D4F43]" />
-                  Email Google đồng bộ đa thiết bị (Cloud Firestore)
-                </h4>
-                <p className="mt-1 text-[11px] text-[#57605E]">
-                  Các thiết bị đăng nhập bằng email Google trong danh sách dưới đây sẽ đồng bộ toàn bộ dữ liệu theo thời gian thực qua <code className="font-mono">onSnapshot</code>.
-                </p>
-
-                {syncEmailMsg && (
-                  <div
-                    role="status"
-                    className={`mt-2 rounded-lg border px-3 py-2 text-xs font-medium ${
-                      syncEmailMsg.type === 'error'
-                        ? 'border-[#A63429]/30 bg-[#A63429]/5 text-[#A63429]'
-                        : 'border-[#0D4F43]/30 bg-[#0D4F43]/10 text-[#0D4F43]'
-                    }`}
-                  >
-                    {syncEmailMsg.text}
-                  </div>
-                )}
-
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {memberEmails.map((em) => {
-                    const isPrimary = em === 'hangan269@gmail.com' || em === firebaseUserEmail?.toLowerCase();
-                    return (
-                      <div
-                        key={em}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-2.5 py-1 text-xs text-[#1A1F1E]"
-                      >
-                        <span className="font-mono">{em}</span>
-                        {!isPrimary && (
-                          <button
-                            type="button"
-                            disabled={syncEmailBusy}
-                            aria-label={`Gỡ email ${em}`}
-                            onClick={async () => {
-                              setSyncEmailBusy(true);
-                              setSyncEmailMsg(null);
-                              const res = await onUpdateMemberEmails(
-                                memberEmails.filter((item) => item !== em)
-                              );
-                              setSyncEmailBusy(false);
-                              if (!res.ok) {
-                                setSyncEmailMsg({ type: 'error', text: res.error });
-                              } else {
-                                setSyncEmailMsg({ type: 'success', text: `Đã gỡ ${em} khỏi danh sách đồng bộ.` });
-                              }
-                            }}
-                            className="text-[#A63429] hover:opacity-75 disabled:opacity-40"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    const clean = newSyncEmail.trim().toLowerCase();
-                    if (!clean || !clean.includes('@')) {
-                      setSyncEmailMsg({ type: 'error', text: 'Vui lòng nhập email Google hợp lệ.' });
-                      return;
-                    }
-                    if (memberEmails.includes(clean)) {
-                      setSyncEmailMsg({ type: 'error', text: 'Email này đã có trong danh sách đồng bộ.' });
-                      return;
-                    }
-                    setSyncEmailBusy(true);
-                    setSyncEmailMsg(null);
-                    const res = await onUpdateMemberEmails([...memberEmails, clean]);
-                    setSyncEmailBusy(false);
-                    if (!res.ok) {
-                      setSyncEmailMsg({ type: 'error', text: res.error });
-                    } else {
-                      setNewSyncEmail('');
-                      setSyncEmailMsg({ type: 'success', text: `Đã cấp quyền đồng bộ Firestore cho ${clean}.` });
-                    }
-                  }}
-                  className="mt-3 flex flex-wrap gap-2"
-                >
-                  <input
-                    type="email"
-                    value={newSyncEmail}
-                    onChange={(e) => setNewSyncEmail(e.target.value)}
-                    placeholder="Nhập Gmail thành viên khác (vd: giang@gmail.com)"
-                    className="min-w-[240px] flex-1 rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
-                  />
-                  <button
-                    type="submit"
-                    disabled={syncEmailBusy}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#093B32] disabled:opacity-50"
-                  >
-                    <MailPlus className="h-3.5 w-3.5" />
-                    Thêm email đồng bộ
-                  </button>
-                </form>
-              </div>
-            )}
 
             {onRequestResetSystem && hasSystemData && (
               <div className="mt-6 border-t border-[#ECE7DD] pt-5">

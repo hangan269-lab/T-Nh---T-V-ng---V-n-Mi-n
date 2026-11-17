@@ -1,30 +1,18 @@
 {
   "entities": {
-    "AdminMarker": {
-      "title": "AdminMarker",
-      "description": "Bootstrapped Firebase admin record keyed by Firebase Auth UID.",
-      "type": "object",
-      "properties": {
-        "email": { "type": "string", "maxLength": 160 },
-        "role": { "type": "string", "enum": ["Admin"] },
-        "serverCreatedAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["email", "role", "serverCreatedAt"]
-    },
     "SystemMeta": {
       "title": "SystemMeta",
-      "description": "Workspace initialization status and authorized member email list.",
+      "description": "Studio workspace initialization status.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "isSampleData": { "type": "boolean" },
         "seeded": { "type": "boolean" },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array", "description": "Authorized Google emails (max 20)" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "isSampleData", "seeded", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "isSampleData", "seeded", "serverCreatedAt", "serverUpdatedAt"]
     },
     "Product": {
       "title": "Product",
@@ -32,6 +20,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "code": { "type": "string", "maxLength": 40 },
         "name": { "type": "string", "maxLength": 160 },
         "brand": { "type": "string", "enum": ["Tơ Nhã", "Tơ Vương", "Vân Miên"] },
@@ -40,12 +29,10 @@
         "initialStock": { "type": "object" },
         "stockAdjustments": { "type": "object" },
         "isArchived": { "type": "boolean" },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "code", "name", "brand", "costPrice", "sellPrice", "initialStock", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "code", "name", "brand", "costPrice", "sellPrice", "initialStock", "serverCreatedAt", "serverUpdatedAt"]
     },
     "StockImport": {
       "title": "StockImport",
@@ -53,6 +40,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "date": { "type": "string", "maxLength": 20 },
         "productId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "size": { "type": "string", "enum": ["S", "M", "L", "Freesize"] },
@@ -60,12 +48,10 @@
         "unitCost": { "type": "number" },
         "note": { "type": "string", "maxLength": 500 },
         "enteredBy": { "type": "string", "maxLength": 160 },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "date", "productId", "size", "quantity", "unitCost", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "date", "productId", "size", "quantity", "unitCost", "serverCreatedAt", "serverUpdatedAt"]
     },
     "Order": {
       "title": "Order",
@@ -73,6 +59,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "code": { "type": "string", "maxLength": 40 },
         "date": { "type": "string", "maxLength": 20 },
         "brand": { "type": "string", "enum": ["Tơ Nhã", "Tơ Vương", "Vân Miên"] },
@@ -95,16 +82,14 @@
         "paymentConfirmedAt": { "type": "string", "maxLength": 64 },
         "cancelledBy": { "type": "string", "maxLength": 160 },
         "cancelledAt": { "type": "string", "maxLength": 64 },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "id", "code", "date", "brand", "customerName", "customerPhone", "shippingAddress",
+        "id", "workspaceId", "code", "date", "brand", "customerName", "customerPhone", "shippingAddress",
         "shippingMethod", "shopShippingCost", "shippingCostPayer", "shippingStatus",
         "weightGrams", "items", "shippingFee", "note", "paymentStatus", "isCancelled",
-        "createdAt", "createdBy", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"
+        "createdAt", "createdBy", "serverCreatedAt", "serverUpdatedAt"
       ]
     },
     "Shareholder": {
@@ -113,16 +98,15 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "name": { "type": "string", "maxLength": 160 },
         "contribution": { "type": "number" },
         "note": { "type": "string", "maxLength": 500 },
         "updatedBy": { "type": "string", "maxLength": 160 },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "name", "contribution", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "name", "contribution", "serverCreatedAt", "serverUpdatedAt"]
     },
     "Expense": {
       "title": "Expense",
@@ -130,6 +114,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "linkedOrderId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "linkedImportId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "date": { "type": "string", "maxLength": 20 },
@@ -143,14 +128,12 @@
         "enteredBy": { "type": "string", "maxLength": 160 },
         "updatedBy": { "type": "string", "maxLength": 160 },
         "updatedAt": { "type": "string", "maxLength": 64 },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "id", "date", "category", "brandScope", "detail", "amount", "paidBy",
-        "receiptNote", "status", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"
+        "id", "workspaceId", "date", "category", "brandScope", "detail", "amount", "paidBy",
+        "receiptNote", "status", "serverCreatedAt", "serverUpdatedAt"
       ]
     },
     "BudgetItem": {
@@ -159,41 +142,40 @@
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "category": { "type": "string", "maxLength": 80 },
         "detail": { "type": "string", "maxLength": 500 },
         "quantity": { "type": "number" },
         "estimatedUnitPrice": { "type": "number" },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "category", "detail", "quantity", "estimatedUnitPrice", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "category", "detail", "quantity", "estimatedUnitPrice", "serverCreatedAt", "serverUpdatedAt"]
     },
     "UserAccount": {
       "title": "UserAccount",
-      "description": "Team operator profile with role and POS/ERP PIN.",
+      "description": "Team operator profile with role and 4-digit PIN.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "name": { "type": "string", "maxLength": 160 },
         "username": { "type": "string", "maxLength": 64 },
         "role": { "type": "string", "enum": ["Admin", "Thành viên"] },
         "pin": { "type": "string", "minLength": 4, "maxLength": 32 },
         "createdAt": { "type": "string", "maxLength": 64 },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "name", "username", "role", "pin", "createdAt", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "name", "username", "role", "pin", "createdAt", "serverCreatedAt", "serverUpdatedAt"]
     },
     "AuditLogEntry": {
       "title": "AuditLogEntry",
-      "description": "Immutable audit trail record for orders, inventory, finance, and accounts.",
+      "description": "Audit trail record for orders, inventory, finance, and accounts.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "timestamp": { "type": "string", "maxLength": 64 },
         "actorId": { "type": "string", "maxLength": 128 },
         "actorName": { "type": "string", "maxLength": 160 },
@@ -202,19 +184,13 @@
         "detail": { "type": "string", "maxLength": 500 },
         "oldValue": { "type": "string", "maxLength": 500 },
         "newValue": { "type": "string", "maxLength": 500 },
-        "ownerUid": { "type": "string", "maxLength": 128 },
-        "memberEmails": { "type": "array" },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "timestamp", "actorId", "actorName", "category", "action", "detail", "ownerUid", "memberEmails", "serverCreatedAt", "serverUpdatedAt"]
+      "required": ["id", "workspaceId", "timestamp", "actorId", "actorName", "category", "action", "detail", "serverCreatedAt", "serverUpdatedAt"]
     }
   },
   "firestore": {
-    "/admins/{userId}": {
-      "schema": { "$ref": "#/entities/AdminMarker" },
-      "description": "Bootstrapped Firebase admin marker documents."
-    },
     "/system/{docId}": {
       "schema": { "$ref": "#/entities/SystemMeta" },
       "description": "Studio workspace initialization metadata and sample-data status."

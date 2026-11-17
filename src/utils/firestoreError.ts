@@ -1,5 +1,3 @@
-import { auth } from '../firebase';
-
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -34,16 +32,12 @@ export function handleFirestoreError(
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData?.map((provider) => ({
-          providerId: provider.providerId,
-          email: provider.email,
-        })) || [],
+      userId: 'nhavuongmien_studio',
+      email: null,
+      emailVerified: null,
+      isAnonymous: false,
+      tenantId: null,
+      providerInfo: [{ providerId: 'internal-team-pin', email: null }],
     },
     operationType,
     path,
@@ -55,14 +49,14 @@ export function handleFirestoreError(
 
 export function formatFirestoreErrorForUser(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  if (raw.includes("Free daily read units per project")) {
+  if (raw.includes('Free daily read units per project')) {
     return 'Hệ thống đã chạm giới hạn lượt đọc miễn phí trong ngày của Firestore (Spark plan). Hạn mức sẽ tự động đặt lại vào ngày mai hoặc có thể nâng cấp gói Blaze trên Firebase Console.';
   }
   if (raw.includes('Quota exceeded')) {
     return 'Đã vượt quá hạn mức miễn phí Firestore trong ngày (Spark plan). Dữ liệu của bạn vẫn an toàn và hạn mức sẽ tự làm mới vào ngày mai.';
   }
   if (raw.includes('Missing or insufficient permissions') || raw.includes('permission-denied')) {
-    return 'Tài khoản Google hiện tại chưa được cấp quyền truy cập dữ liệu Studio hoặc phiên xác thực chưa hợp lệ.';
+    return 'Quy tắc bảo mật Firestore (firestore.rules) đang từ chối thao tác này. Vui lòng kiểm tra cấu hình đồng bộ dữ liệu.';
   }
   if (raw.includes('the client is offline') || raw.includes('unavailable')) {
     return 'Mất kết nối tới máy chủ Firebase Firestore. Vui lòng kiểm tra kết nối mạng.';

@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import {
   Boxes,
   Calculator,
@@ -27,13 +26,11 @@ import { InventoryTab } from './components/InventoryTab';
 import { LoginScreen } from './components/LoginScreen';
 import { OrdersTab } from './components/OrdersTab';
 import { createEmptyState, createSeedState } from './data/seedData';
-import { auth, googleProvider } from './firebase';
 import {
   AppState,
   BudgetItem,
   Expense,
   Order,
-  Product,
   Shareholder,
   ShippingStatus,
   StockImport,
@@ -85,13 +82,11 @@ import {
 } from './utils/finance';
 import { downloadFinanceXLSX, downloadOrdersXLSX } from './utils/excelExport';
 import { formatFirestoreErrorForUser } from './utils/firestoreError';
-import { computeMemberEmails } from './utils/firestoreSanitize';
 import {
   commitStateDiffToFirestore,
   ensureWorkspaceSeeded,
   FirestoreMetaCache,
   subscribeWorkspaceRealtime,
-  updateWorkspaceMemberEmails,
 } from './utils/firestoreSync';
 
 type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'budget' | 'audit';
@@ -142,18 +137,18 @@ const NAV_ITEMS: Array<{
   },
 ];
 
-function resolveSessionUserId(accounts: UserAccount[]): string | null {
+function resolveSavedSessionUserId(accounts: UserAccount[]): string | null {
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1' && accounts[0]) {
       return accounts[0].id;
     }
-    const saved = sessionStorage.getItem(SESSION_USER_KEY);
+    const saved = localStorage.getItem(SESSION_USER_KEY);
     if (saved && accounts.some((a) => a.id === saved)) {
       return saved;
     }
   } catch {
-    // Ignore sessionStorage errors
+    // Ignore localStorage errors
   }
   return null;
 }
@@ -176,16 +171,17 @@ export default function App() {
   const stateRef = useRef<AppState>(initialEmpty);
   const metaCacheRef = useRef<FirestoreMetaCache>(new Map());
 
-  const [authReady, setAuthReady] = useState(false);
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [firestoreLoading, setFirestoreLoading] = useState(false);
-  const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
-  const [googleAuthError, setGoogleAuthError] = useState<string | null>(null);
-  const [memberEmails, setMemberEmails] = useState<string[]>([]);
+  const [firestoreLoading, setFirestoreLoading] = useState(true);
   const [fatalError, setFatalError] = useState<Error | null>(null);
 
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const currentUserIdRef = useRef<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(SESSION_USER_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const currentUserIdRef = useRef<string | null>(currentUserId);
 
   const [activeTab, setActiveTab] = useState<TabId>('dashboard');
   const [isOrderCreateOpen, setIsOrderCreateOpen] = useState(false);
@@ -207,12 +203,12 @@ export default function App() {
     currentUserIdRef.current = currentUserId;
     try {
       if (currentUserId) {
-        sessionStorage.setItem(SESSION_USER_KEY, currentUserId);
+        localStorage.setItem(SESSION_USER_KEY, currentUserId);
       } else {
-        sessionStorage.removeItem(SESSION_USER_KEY);
+        localStorage.removeItem(SESSION_USER_KEY);
       }
     } catch {
-      // Ignore sessionStorage errors
+      // Ignore localStorage errors
     }
   }, [currentUserId]);
 
@@ -220,54 +216,27 @@ export default function App() {
     let activeUnsubscribe: (() => void) | null = null;
     let cancelled = false;
 
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      if (activeUnsubscribe) {
-        activeUnsubscribe();
-        activeUnsubscribe = null;
-      }
-
-      if (!user) {
-        metaCacheRef.current.clear();
-        const empty = createEmptyState();
-        stateRef.current = empty;
-        setState(empty);
-        setFirebaseUser(null);
-        setMemberEmails([]);
-        setCurrentUserId(null);
-        setFirestoreLoading(false);
-        setAuthReady(true);
-        return;
-      }
-
-      if (!user.emailVerified) {
-        setGoogleAuthError('Tài khoản Google chưa xác minh email. Vui lòng sử dụng tài khoản đã xác minh.');
-        setFirebaseUser(null);
-        setAuthReady(true);
-        setFirestoreLoading(false);
-        await signOut(auth).catch(() => undefined);
-        return;
-      }
-
-      setGoogleAuthError(null);
-      setFirebaseUser(user);
-      setAuthReady(true);
+    const connectFirestore = async () => {
       setFirestoreLoading(true);
-      setMemberEmails(computeMemberEmails([], user.email));
-
       try {
-        await ensureWorkspaceSeeded(user, metaCacheRef.current);
+        await ensureWorkspaceSeeded(metaCacheRef.current);
         if (cancelled) return;
 
-        activeUnsubscribe = subscribeWorkspaceRealtime(user, metaCacheRef.current, {
-          onStateChange: (nextState, meta) => {
+        activeUnsubscribe = subscribeWorkspaceRealtime(metaCacheRef.current, {
+          onStateChange: (nextState) => {
             if (cancelled) return;
             stateRef.current = nextState;
             setState(nextState);
-            setMemberEmails(meta.memberEmails);
-            if (!currentUserIdRef.current && nextState.accounts.length > 0) {
-              const resolved = resolveSessionUserId(nextState.accounts);
-              if (resolved) {
-                setCurrentUserId(resolved);
+
+            if (nextState.accounts.length > 0) {
+              const activeId = currentUserIdRef.current;
+              if (!activeId) {
+                const resolved = resolveSavedSessionUserId(nextState.accounts);
+                if (resolved) {
+                  setCurrentUserId(resolved);
+                }
+              } else if (!nextState.accounts.some((a) => a.id === activeId)) {
+                setCurrentUserId(null);
               }
             }
           },
@@ -289,11 +258,12 @@ export default function App() {
           setFatalError(err instanceof Error ? err : new Error(String(err)));
         }
       }
-    });
+    };
+
+    void connectFirestore();
 
     return () => {
       cancelled = true;
-      unsubAuth();
       if (activeUnsubscribe) {
         activeUnsubscribe();
       }
@@ -318,69 +288,9 @@ export default function App() {
     stateRef.current = nextState;
     setState(nextState);
 
-    if (firebaseUser) {
-      void commitStateDiffToFirestore(
-        prevState,
-        nextState,
-        firebaseUser,
-        memberEmails,
-        metaCacheRef.current
-      ).catch((error) => {
-        showNotice(formatFirestoreErrorForUser(error), 'error');
-      });
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setGoogleAuthError(null);
-    setIsSigningInGoogle(true);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes('popup-closed-by-user')) {
-        setGoogleAuthError('Bạn đã đóng cửa sổ đăng nhập Google trước khi hoàn tất.');
-      } else if (msg.includes('popup-blocked')) {
-        setGoogleAuthError('Trình duyệt đang chặn cửa sổ bật lên. Vui lòng cho phép popup để đăng nhập Google.');
-      } else {
-        setGoogleAuthError('Không thể đăng nhập bằng Google. Vui lòng thử lại.');
-      }
-    } finally {
-      setIsSigningInGoogle(false);
-    }
-  };
-
-  const handleGoogleSignOut = async () => {
-    setCurrentUserId(null);
-    setSettingsOpen(false);
-    setIsOrderCreateOpen(false);
-    setMobileMenuOpen(false);
-    setNotice(null);
-    try {
-      await signOut(auth);
-    } catch {
-      showNotice('Không thể đăng xuất khỏi Google.', 'error');
-    }
-  };
-
-  const handleUpdateMemberEmails = async (
-    nextEmails: string[]
-  ): Promise<{ ok: true } | { ok: false; error: string }> => {
-    if (!firebaseUser) {
-      return { ok: false, error: 'Chưa kết nối tài khoản Google.' };
-    }
-    try {
-      const updated = await updateWorkspaceMemberEmails(
-        nextEmails,
-        stateRef.current,
-        firebaseUser,
-        metaCacheRef.current
-      );
-      setMemberEmails(updated);
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, error: formatFirestoreErrorForUser(error) };
-    }
+    void commitStateDiffToFirestore(prevState, nextState, metaCacheRef.current).catch((error) => {
+      showNotice(formatFirestoreErrorForUser(error), 'error');
+    });
   };
 
   const handleLogin = (
@@ -403,21 +313,11 @@ export default function App() {
     setNotice(null);
   };
 
-  if (!firebaseUser || firestoreLoading || !currentUser) {
+  if (firestoreLoading || !currentUser) {
     return (
       <LoginScreen
         accounts={state.accounts}
-        authReady={authReady}
-        firebaseUserEmail={firebaseUser?.email ?? null}
         firestoreLoading={firestoreLoading}
-        googleAuthError={googleAuthError}
-        isSigningInGoogle={isSigningInGoogle}
-        onGoogleSignIn={() => {
-          void handleGoogleSignIn();
-        }}
-        onGoogleSignOut={() => {
-          void handleGoogleSignOut();
-        }}
         onLogin={handleLogin}
       />
     );
@@ -958,7 +858,12 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-[#57605E] whitespace-nowrap">
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              title="Bấm để đổi mã PIN hoặc mở cài đặt tài khoản"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-[#57605E] transition-colors hover:bg-[#F3EFE6] whitespace-nowrap"
+            >
               <span>
                 Xin chào, <strong className="font-semibold text-[#1A1F1E]">{currentUser.name}</strong>
               </span>
@@ -966,7 +871,7 @@ export default function App() {
               <span className={currentUser.role === 'Admin' ? 'font-medium text-[#0D4F43]' : ''}>
                 {currentUser.role === 'Admin' ? 'Quản lý' : 'Thành viên'}
               </span>
-            </div>
+            </button>
 
             <button
               type="button"
@@ -1130,12 +1035,6 @@ export default function App() {
         currentUser={currentUser}
         accounts={state.accounts}
         hasSystemData={hasAnyData}
-        firebaseUserEmail={firebaseUser.email}
-        memberEmails={memberEmails}
-        onGoogleSignOut={() => {
-          void handleGoogleSignOut();
-        }}
-        onUpdateMemberEmails={handleUpdateMemberEmails}
         onClose={() => setSettingsOpen(false)}
         onChangePin={handleChangePin}
         onCreateAccount={handleCreateAccount}

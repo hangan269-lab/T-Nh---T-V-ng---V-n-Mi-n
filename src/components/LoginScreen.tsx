@@ -1,68 +1,71 @@
-import React, { useEffect, useState } from 'react';
-import { Cloud, KeyRound, Loader2, Lock, LogOut, ShieldCheck, UserCheck } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Cloud, KeyRound, Loader2, Lock, ShieldCheck, UserCheck } from 'lucide-react';
 import { UserAccount } from '../types/erp';
 
 interface LoginScreenProps {
   accounts: UserAccount[];
-  authReady: boolean;
-  firebaseUserEmail: string | null;
   firestoreLoading: boolean;
-  googleAuthError: string | null;
-  isSigningInGoogle: boolean;
-  onGoogleSignIn: () => void;
-  onGoogleSignOut: () => void;
   onLogin: (identifier: string, pin: string) => { ok: true } | { ok: false; error: string };
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   accounts,
-  authReady,
-  firebaseUserEmail,
   firestoreLoading,
-  googleAuthError,
-  isSigningInGoogle,
-  onGoogleSignIn,
-  onGoogleSignOut,
   onLogin,
 }) => {
-  const [identifier, setIdentifier] = useState(accounts[0]?.username ?? 'ngan');
+  const [selectedId, setSelectedId] = useState<string>(accounts[0]?.id ?? 'acc_ngan');
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const pinInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (accounts.length > 0 && !accounts.some((a) => a.username === identifier || a.name === identifier)) {
-      setIdentifier(accounts[0].username);
+    if (accounts.length > 0 && !accounts.some((a) => a.id === selectedId)) {
+      setSelectedId(accounts[0].id);
     }
-  }, [accounts, identifier]);
+  }, [accounts, selectedId]);
 
-  const selectedAccount = accounts.find(
-    (a) =>
-      a.username.toLowerCase() === identifier.trim().toLowerCase() ||
-      a.name.toLowerCase() === identifier.trim().toLowerCase()
-  );
+  const selectedAccount = accounts.find((a) => a.id === selectedId) ?? accounts[0] ?? null;
 
   const handleSelectAccount = (account: UserAccount) => {
-    setIdentifier(account.username);
+    setSelectedId(account.id);
+    setPin('');
     setError(null);
-    const pinInput = document.getElementById('login-pin');
-    if (pinInput) {
-      pinInput.focus();
+    window.setTimeout(() => {
+      pinInputRef.current?.focus();
+    }, 0);
+  };
+
+  const attemptLogin = (candidatePin: string) => {
+    if (!selectedAccount) return;
+    const res = onLogin(selectedAccount.username, candidatePin);
+    if (!res.ok) {
+      setError(res.error);
+      setPin('');
+      window.setTimeout(() => {
+        pinInputRef.current?.focus();
+      }, 0);
+    }
+  };
+
+  const handlePinChange = (raw: string) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 4);
+    setPin(digits);
+    setError(null);
+    if (digits.length === 4 && selectedAccount) {
+      attemptLogin(digits);
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const result = onLogin(identifier, pin);
-    if (!result.ok) {
-      setError(result.error);
-    }
+    attemptLogin(pin);
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#FAF8F4] px-4 py-10 text-[#1A1F1E]">
       <div className="grid w-full max-w-4xl grid-cols-1 overflow-hidden rounded-2xl border border-[#E4DFD5] bg-white lg:grid-cols-12">
-        {/* Left column: Brand & Team Context */}
+        {/* Left column: Brand & Studio Context */}
         <div className="flex flex-col justify-between border-b border-[#ECE7DD] bg-[#F6F2EA] p-8 lg:col-span-5 lg:border-b-0 lg:border-r">
           <div>
             <div className="font-serif text-2xl font-bold tracking-tight text-[#1A1F1E]">
@@ -70,7 +73,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             </div>
             <div className="mt-1 text-sm font-medium text-[#0D4F43]">&amp; Vân Miên Studio</div>
             <p className="mt-6 text-sm leading-relaxed text-[#57605E]">
-              Hệ thống quản lý bán hàng, tồn kho, tài chính và nhật ký thao tác đồng bộ thời gian thực trên Cloud Firestore cho đội ngũ 3 thương hiệu.
+              Hệ thống quản lý bán hàng, tồn kho, tài chính và lịch sử thao tác đồng bộ thời gian thực trên Cloud Firestore cho đội ngũ 5 thành viên.
             </p>
           </div>
 
@@ -84,136 +87,103 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="flex items-start gap-2.5">
               <UserCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0D4F43]" />
               <span>
-                Tự động ghi nhận <strong className="text-[#1A1F1E]">Người tạo đơn</strong> và{' '}
+                Tự động ghi nhận <strong className="text-[#1A1F1E]">Người tạo đơn</strong>,{' '}
+                <strong className="text-[#1A1F1E]">Người sửa/xóa</strong> và{' '}
                 <strong className="text-[#1A1F1E]">Người xác nhận thanh toán</strong>.
               </span>
             </div>
             <div className="flex items-start gap-2.5">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0D4F43]" />
               <span>
-                Phân quyền rõ ràng giữa <strong className="text-[#1A1F1E]">Admin (Ngân)</strong> và{' '}
-                <strong className="text-[#1A1F1E]">Thành viên</strong>; bảo mật theo tài khoản Google.
+                Đăng nhập nhanh bằng thẻ thành viên và <strong className="text-[#1A1F1E]">Mã PIN 4 số</strong>; tự động giữ phiên đăng nhập trên trình duyệt.
               </span>
             </div>
           </div>
         </div>
 
-        {/* Right column: Cloud Auth + Team PIN Form */}
+        {/* Right column: 5-Member Selector + Auto-Submit 4-Digit PIN */}
         <div className="p-8 lg:col-span-7">
-          {!authReady ? (
-            <div className="flex min-h-[320px] flex-col items-center justify-center text-center">
+          {firestoreLoading ? (
+            <div className="flex min-h-[340px] flex-col items-center justify-center text-center">
               <Loader2 className="h-7 w-7 animate-spin text-[#0D4F43]" />
               <p className="mt-3 text-sm font-medium text-[#1A1F1E]">
-                Đang kiểm tra phiên đăng nhập Firebase...
-              </p>
-            </div>
-          ) : !firebaseUserEmail ? (
-            <div className="flex min-h-[320px] flex-col justify-center">
-              <h1 className="font-serif text-2xl font-semibold text-[#1A1F1E]">
-                Kết nối dữ liệu Cloud Firestore
-              </h1>
-              <p className="mt-2 text-sm leading-relaxed text-[#57605E]">
-                Đăng nhập bằng tài khoản Google để kết nối và đồng bộ dữ liệu thời gian thực giữa các thiết bị của studio.
-              </p>
-
-              {googleAuthError && (
-                <div
-                  role="alert"
-                  className="mt-4 rounded-lg border border-[#A63429]/30 bg-[#A63429]/5 px-4 py-3 text-sm font-medium text-[#A63429]"
-                >
-                  {googleAuthError}
-                </div>
-              )}
-
-              <button
-                type="button"
-                disabled={isSigningInGoogle}
-                onClick={onGoogleSignIn}
-                className="mt-6 inline-flex w-full items-center justify-center gap-2.5 rounded-lg bg-[#0D4F43] px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-[#093B32] disabled:opacity-60"
-              >
-                {isSigningInGoogle ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Đang mở cửa sổ đăng nhập Google...
-                  </>
-                ) : (
-                  <>
-                    <Cloud className="h-4 w-4" />
-                    Đăng nhập Google để kết nối Firestore
-                  </>
-                )}
-              </button>
-
-              <p className="mt-4 text-xs leading-relaxed text-[#57605E]">
-                Sau khi kết nối Google thành công, hệ thống sẽ tải toàn bộ danh sách thành viên (Ngân, Giang, Hoa, Phương, Linh) và dữ liệu trực tiếp từ Firestore.
-              </p>
-            </div>
-          ) : firestoreLoading ? (
-            <div className="flex min-h-[320px] flex-col items-center justify-center text-center">
-              <Loader2 className="h-7 w-7 animate-spin text-[#0D4F43]" />
-              <p className="mt-3 text-sm font-medium text-[#1A1F1E]">
-                Đang đồng bộ dữ liệu thời gian thực từ Firestore...
+                Đang đồng bộ danh sách thành viên &amp; dữ liệu từ Cloud Firestore...
               </p>
               <p className="mt-1 text-xs text-[#57605E]">
-                Tài khoản Google: <strong className="text-[#1A1F1E]">{firebaseUserEmail}</strong>
+                Vui lòng chờ trong giây lát.
               </p>
             </div>
           ) : (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-3.5 py-2 text-xs">
-                <div className="text-[#57605E]">
-                  Cloud: <strong className="font-medium text-[#0D4F43]">{firebaseUserEmail}</strong>
-                </div>
-                <button
-                  type="button"
-                  onClick={onGoogleSignOut}
-                  className="inline-flex items-center gap-1 font-medium text-[#A63429] hover:underline"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  Đổi tài khoản Google
-                </button>
-              </div>
-
-              <h1 className="mt-5 font-serif text-2xl font-semibold text-[#1A1F1E]">
-                Đăng nhập thành viên
+              <h1 className="font-serif text-2xl font-semibold text-[#1A1F1E]">
+                Chọn thành viên đăng nhập
               </h1>
               <p className="mt-1 text-sm text-[#57605E]">
-                Chọn tài khoản thành viên hoặc nhập tên đăng nhập và mã PIN để bắt đầu ca làm việc.
+                Bấm vào tên của bạn rồi nhập mã PIN 4 số — hệ thống sẽ tự động mở khóa ngay sau chữ số thứ 4.
               </p>
 
-              {/* Quick-select member buttons */}
-              <div className="mt-5">
-                <div className="text-xs font-medium text-[#57605E]">Chọn nhanh tài khoản thành viên</div>
-                <div
-                  role="group"
-                  aria-label="Danh sách tài khoản thành viên"
-                  className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
-                >
-                  {accounts.map((acc) => {
-                    const isSelected = selectedAccount?.id === acc.id;
-                    return (
-                      <button
-                        key={acc.id}
-                        type="button"
-                        aria-pressed={isSelected}
-                        onClick={() => handleSelectAccount(acc)}
-                        className={`flex flex-col items-start rounded-lg border px-3 py-2 text-left transition-colors ${
+              {/* 5 Member Avatar Cards */}
+              <div
+                role="group"
+                aria-label="Danh sách thành viên studio"
+                className="mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3"
+              >
+                {accounts.map((acc) => {
+                  const isSelected = selectedAccount?.id === acc.id;
+                  const initial = acc.name.trim().charAt(0).toUpperCase() || '?';
+                  return (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => handleSelectAccount(acc)}
+                      className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                        isSelected
+                          ? 'border-[#0D4F43] bg-[#0D4F43]/[0.06] text-[#0D4F43]'
+                          : 'border-[#E4DFD5] bg-white text-[#1A1F1E] hover:bg-[#FAF8F4]'
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-serif text-base font-bold ${
                           isSelected
-                            ? 'border-[#0D4F43] bg-[#0D4F43]/5 text-[#0D4F43]'
-                            : 'border-[#E4DFD5] bg-white text-[#1A1F1E] hover:bg-[#FAF8F4]'
+                            ? 'bg-[#0D4F43] text-white'
+                            : 'bg-[#EFEAE0] text-[#1A1F1E]'
                         }`}
                       >
-                        <span className="text-sm font-semibold">{acc.name}</span>
-                        <span className="text-[11px] text-[#57605E]">
-                          {acc.role === 'Admin' ? 'Admin / Quản lý' : 'Thành viên'}
+                        {initial}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold">{acc.name}</span>
+                        <span className="block truncate text-[11px] text-[#57605E]">
+                          {acc.role === 'Admin' ? 'Admin' : 'Thành viên'}
                         </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
-              <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+              <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+                {selectedAccount && (
+                  <div className="flex items-center justify-between rounded-xl border border-[#E4DFD5] bg-[#FAF8F4] px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0D4F43] font-serif text-sm font-bold text-white">
+                        {selectedAccount.name.trim().charAt(0).toUpperCase()}
+                      </span>
+                      <div>
+                        <div className="text-sm font-semibold text-[#1A1F1E]">
+                          {selectedAccount.name}
+                        </div>
+                        <div className="text-xs text-[#57605E]">
+                          {selectedAccount.role === 'Admin' ? 'Admin / Quản lý' : 'Thành viên'} · @{selectedAccount.username}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-xs font-medium text-[#0D4F43]">Đang chọn</span>
+                  </div>
+                )}
+
                 {error && (
                   <div
                     role="alert"
@@ -224,40 +194,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 )}
 
                 <div>
-                  <label htmlFor="login-identifier" className="block text-xs font-medium text-[#57605E]">
-                    Tên đăng nhập hoặc Tên tài khoản
-                  </label>
-                  <input
-                    id="login-identifier"
-                    type="text"
-                    value={identifier}
-                    onChange={(e) => {
-                      setIdentifier(e.target.value);
-                      setError(null);
-                    }}
-                    placeholder="Ví dụ: ngan, giang, hoa, phuong, linh"
-                    className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2.5 text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
                   <label htmlFor="login-pin" className="block text-xs font-medium text-[#57605E]">
-                    Mật khẩu / Mã PIN 4 số
+                    Nhập mã PIN 4 số
                   </label>
                   <div className="relative mt-1.5">
-                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#57605E]" />
+                    <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#57605E]" />
                     <input
+                      ref={pinInputRef}
                       id="login-pin"
                       type="password"
                       inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={4}
+                      autoFocus
+                      autoComplete="one-time-code"
                       value={pin}
-                      onChange={(e) => {
-                        setPin(e.target.value);
-                        setError(null);
-                      }}
-                      placeholder="Nhập mã PIN (mặc định: 1234)"
-                      className="w-full rounded-lg border border-[#E4DFD5] bg-white py-2.5 pl-9 pr-3 font-mono text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
+                      onChange={(e) => handlePinChange(e.target.value)}
+                      placeholder="••••"
+                      className="w-full rounded-xl border border-[#E4DFD5] bg-white py-3 pl-10 pr-4 text-center font-mono text-xl tracking-[0.6em] text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
                       required
                     />
                   </div>
@@ -265,14 +219,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#0D4F43] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#093B32]"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0D4F43] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#093B32]"
                 >
                   <KeyRound className="h-4 w-4" />
                   Đăng nhập{selectedAccount ? ` với tên ${selectedAccount.name}` : ''}
                 </button>
 
-                <p className="text-xs text-[#57605E]">
-                  Mã PIN mặc định cho 5 tài khoản khởi tạo là <span className="font-mono font-semibold text-[#1A1F1E]">1234</span>. Thành viên có thể đổi mã PIN riêng trong mục Cài đặt tài khoản sau khi đăng nhập.
+                <p className="text-xs leading-relaxed text-[#57605E]">
+                  Mã PIN khởi tạo mặc định: <span className="font-mono font-medium text-[#1A1F1E]">Ngân (1111)</span>,{' '}
+                  <span className="font-mono font-medium text-[#1A1F1E]">Giang (2222)</span>,{' '}
+                  <span className="font-mono font-medium text-[#1A1F1E]">Hoa (3333)</span>,{' '}
+                  <span className="font-mono font-medium text-[#1A1F1E]">Phương (4444)</span>,{' '}
+                  <span className="font-mono font-medium text-[#1A1F1E]">Linh (5555)</span>. Có thể đổi PIN riêng hoặc nhờ Admin đặt lại trong mục Cài đặt.
                 </p>
               </form>
             </>

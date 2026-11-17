@@ -12,7 +12,7 @@ import {
   UserAccount,
 } from '../types/erp';
 
-export const WORKSPACE_ADMIN_EMAIL = 'hangan269@gmail.com';
+export const WORKSPACE_ID = 'nhavuongmien_studio';
 export const SYSTEM_META_DOC_ID = 'meta';
 
 export const BUSINESS_COLLECTIONS = [
@@ -43,7 +43,6 @@ export const BLUEPRINT_LIMITS = {
   DATE_MAX: 20,
   TIMESTAMP_MAX: 64,
   ORDER_ITEMS_MAX: 30,
-  MEMBER_EMAILS_MAX: 20,
 } as const;
 
 export function sanitizeId(rawId: string, fallbackPrefix = 'doc'): string {
@@ -72,26 +71,6 @@ export function clampNum(val: unknown, min = 0, max = 100000000000): number {
   const n = Number(val);
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, Math.round(n)));
-}
-
-export function computeMemberEmails(
-  existingEmails: string[] | undefined,
-  currentEmail: string | null | undefined
-): string[] {
-  const set = new Set<string>();
-  set.add(WORKSPACE_ADMIN_EMAIL.toLowerCase());
-  if (currentEmail && currentEmail.trim()) {
-    set.add(currentEmail.trim().toLowerCase());
-  }
-  if (Array.isArray(existingEmails)) {
-    for (const em of existingEmails) {
-      const clean = String(em || '').trim().toLowerCase();
-      if (clean && clean.includes('@') && set.size < BLUEPRINT_LIMITS.MEMBER_EMAILS_MAX) {
-        set.add(clean);
-      }
-    }
-  }
-  return Array.from(set).slice(0, BLUEPRINT_LIMITS.MEMBER_EMAILS_MAX);
 }
 
 function sanitizeStockMap(

@@ -9,6 +9,24 @@ import {
 } from '../types/erp';
 import { getRelativeISO, getTodayISO } from '../utils/finance';
 
+export const DEFAULT_PIN_BY_USERNAME: Record<string, string> = {
+  ngan: '1111',
+  giang: '2222',
+  hoa: '3333',
+  phuong: '4444',
+  linh: '5555',
+};
+
+export function getDefaultPinForAccount(
+  acc: Pick<UserAccount, 'id' | 'username' | 'name'>
+): string {
+  const byUser = DEFAULT_PIN_BY_USERNAME[acc.username.trim().toLowerCase()];
+  if (byUser) return byUser;
+  const byId = DEFAULT_PIN_BY_USERNAME[acc.id.replace(/^acc_/, '').toLowerCase()];
+  if (byId) return byId;
+  return '1234';
+}
+
 export function createDefaultAccounts(): UserAccount[] {
   const createdAt = '2026-11-01T08:00:00.000Z';
   return [
@@ -17,7 +35,7 @@ export function createDefaultAccounts(): UserAccount[] {
       name: 'Ngân',
       username: 'ngan',
       role: 'Admin',
-      pin: '1234',
+      pin: '1111',
       createdAt,
     },
     {
@@ -25,7 +43,7 @@ export function createDefaultAccounts(): UserAccount[] {
       name: 'Giang',
       username: 'giang',
       role: 'Thành viên',
-      pin: '1234',
+      pin: '2222',
       createdAt,
     },
     {
@@ -33,7 +51,7 @@ export function createDefaultAccounts(): UserAccount[] {
       name: 'Hoa',
       username: 'hoa',
       role: 'Thành viên',
-      pin: '1234',
+      pin: '3333',
       createdAt,
     },
     {
@@ -41,7 +59,7 @@ export function createDefaultAccounts(): UserAccount[] {
       name: 'Phương',
       username: 'phuong',
       role: 'Thành viên',
-      pin: '1234',
+      pin: '4444',
       createdAt,
     },
     {
@@ -49,7 +67,7 @@ export function createDefaultAccounts(): UserAccount[] {
       name: 'Linh',
       username: 'linh',
       role: 'Thành viên',
-      pin: '1234',
+      pin: '5555',
       createdAt,
     },
   ];

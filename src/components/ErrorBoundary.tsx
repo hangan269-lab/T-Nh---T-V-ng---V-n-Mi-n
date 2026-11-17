@@ -1,7 +1,5 @@
 import React from 'react';
-import { AlertTriangle, LogOut, RefreshCw } from 'lucide-react';
-import { signOut } from 'firebase/auth';
-import { auth } from '../firebase';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { formatFirestoreErrorForUser } from '../utils/firestoreError';
 
 interface ErrorBoundaryState {
@@ -28,16 +26,6 @@ export class ErrorBoundary extends React.Component<
 
   private handleReload = () => {
     window.location.reload();
-  };
-
-  private handleSignOutGoogle = async () => {
-    try {
-      await signOut(auth);
-    } catch {
-      // Ignore signout error
-    } finally {
-      window.location.reload();
-    }
   };
 
   override render() {
@@ -72,14 +60,6 @@ export class ErrorBoundary extends React.Component<
             >
               <RefreshCw className="h-4 w-4" />
               Tải lại ứng dụng
-            </button>
-            <button
-              type="button"
-              onClick={this.handleSignOutGoogle}
-              className="inline-flex items-center gap-2 rounded-lg border border-[#E4DFD5] bg-white px-4 py-2 text-sm font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
-            >
-              <LogOut className="h-4 w-4" />
-              Đổi tài khoản Google
             </button>
           </div>
         </div>

@@ -279,7 +279,7 @@ test('authentication, account creation, PIN change, and RBAC deletion rules work
   const seed = createSeedState(new Date('2026-11-16T10:00:00'));
   assert.equal(seed.accounts.length, 5);
 
-  const okLogin = authenticateUser(seed.accounts, 'giang', '1234');
+  const okLogin = authenticateUser(seed.accounts, 'giang', '2222');
   assert.equal(okLogin.ok, true);
   if (!okLogin.ok) return;
   assert.equal(okLogin.account.name, 'Giang');
@@ -316,11 +316,11 @@ test('authentication, account creation, PIN change, and RBAC deletion rules work
     'acc_giang',
     '4321',
     giangActor,
-    '1234'
+    '2222'
   );
   assert.equal(pinChanged.ok, true);
   if (!pinChanged.ok) return;
-  assert.equal(authenticateUser(pinChanged.state.accounts, 'Giang', '1234').ok, false);
+  assert.equal(authenticateUser(pinChanged.state.accounts, 'Giang', '2222').ok, false);
   assert.equal(authenticateUser(pinChanged.state.accounts, 'Giang', '4321').ok, true);
 
   // RBAC: Giang cannot delete expense or shareholder permanently; Ngân can

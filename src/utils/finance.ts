@@ -2231,11 +2231,11 @@ function normalizeImportedOrder(o: Partial<Order> & Record<string, unknown>): Or
 function defaultFallbackAccounts(): UserAccount[] {
   const createdAt = '2026-11-01T08:00:00.000Z';
   return [
-    { id: 'acc_ngan', name: 'Ngân', username: 'ngan', role: 'Admin', pin: '1234', createdAt },
-    { id: 'acc_giang', name: 'Giang', username: 'giang', role: 'Thành viên', pin: '1234', createdAt },
-    { id: 'acc_hoa', name: 'Hoa', username: 'hoa', role: 'Thành viên', pin: '1234', createdAt },
-    { id: 'acc_phuong', name: 'Phương', username: 'phuong', role: 'Thành viên', pin: '1234', createdAt },
-    { id: 'acc_linh', name: 'Linh', username: 'linh', role: 'Thành viên', pin: '1234', createdAt },
+    { id: 'acc_ngan', name: 'Ngân', username: 'ngan', role: 'Admin', pin: '1111', createdAt },
+    { id: 'acc_giang', name: 'Giang', username: 'giang', role: 'Thành viên', pin: '2222', createdAt },
+    { id: 'acc_hoa', name: 'Hoa', username: 'hoa', role: 'Thành viên', pin: '3333', createdAt },
+    { id: 'acc_phuong', name: 'Phương', username: 'phuong', role: 'Thành viên', pin: '4444', createdAt },
+    { id: 'acc_linh', name: 'Linh', username: 'linh', role: 'Thành viên', pin: '5555', createdAt },
   ];
 }
 

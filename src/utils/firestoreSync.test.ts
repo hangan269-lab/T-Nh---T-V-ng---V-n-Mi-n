@@ -1,28 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createEmptyState, createSeedState } from '../data/seedData';
+import { createEmptyState, createSeedState, getDefaultPinForAccount } from '../data/seedData';
 import {
   BLUEPRINT_LIMITS,
-  computeMemberEmails,
   computeStateDiffOps,
   sanitizeEntityForCollection,
   sanitizeId,
   sanitizeOrderPayload,
-  WORKSPACE_ADMIN_EMAIL,
+  WORKSPACE_ID,
 } from './firestoreSanitize';
 import { createOrderWithValidation, deleteOrderWithAudit } from './finance';
 
-test('computeMemberEmails always includes bootstrapped admin, deduplicates, and caps at 20', () => {
-  const result = computeMemberEmails(
-    ['GIANG@gmail.com', 'hangan269@gmail.com', 'hoa@gmail.com', 'invalid-email'],
-    'giang@gmail.com'
-  );
-  assert.equal(result[0], WORKSPACE_ADMIN_EMAIL);
-  assert.ok(result.includes('giang@gmail.com'));
-  assert.ok(result.includes('hoa@gmail.com'));
-  assert.ok(!result.includes('invalid-email'));
-  assert.equal(new Set(result).size, result.length);
-  assert.ok(result.length <= BLUEPRINT_LIMITS.MEMBER_EMAILS_MAX);
+test('default workspace constant and per-member PIN mapping are configured accurately', () => {
+  assert.equal(WORKSPACE_ID, 'nhavuongmien_studio');
+  const seed = createSeedState();
+  assert.equal(getDefaultPinForAccount(seed.accounts[0]), '1111');
+  assert.equal(getDefaultPinForAccount(seed.accounts[1]), '2222');
+  assert.equal(getDefaultPinForAccount(seed.accounts[2]), '3333');
+  assert.equal(getDefaultPinForAccount(seed.accounts[3]), '4444');
+  assert.equal(getDefaultPinForAccount(seed.accounts[4]), '5555');
 });
 
 test('sanitizeId strips invalid Firestore path characters and enforces length limit', () => {
