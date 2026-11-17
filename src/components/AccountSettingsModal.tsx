@@ -657,7 +657,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                       Dữ liệu hệ thống &amp; Dữ liệu mẫu
                     </div>
                     <p className="mt-0.5 text-[11px] text-[#57605E]">
-                      Xóa sạch toàn bộ đơn hàng, tồn kho, cổ đông, chi phí, dự trù về 0 để bắt đầu nhập liệu thực tế (giữ nguyên tài khoản team).
+                      Xóa sạch toàn bộ đơn hàng, tồn kho, cổ đông, chi phí về 0 để bắt đầu nhập liệu thực tế (giữ nguyên tài khoản team).
                     </p>
                   </div>
                   <button

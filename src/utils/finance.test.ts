@@ -4,6 +4,7 @@ import {
   ActorIdentity,
   addBudgetItemWithAudit,
   addExpenseWithAudit,
+  addShareholderWithAudit,
   addStockImportWithAudit,
   archiveProductWithAudit,
   authenticateUser,
@@ -35,6 +36,7 @@ import {
   hasProductOrderHistory,
   markOrdersShippingStatus,
   parseImportedJSON,
+  parseVNDInput,
   saveProductWithAudit,
   saveProductWithValidation,
   suggestNextProductCode,
@@ -772,7 +774,8 @@ test('SheetJS Excel (.xlsx) builders generate valid orders workbook and 3-sheet 
   assert.deepEqual(ordersWb.SheetNames, ['Danh_sach_don_hang']);
   const ordersWs = ordersWb.Sheets['Danh_sach_don_hang'];
   assert.equal(ordersWs['A1'].v, 'Mã đơn');
-  assert.equal(ordersWs['P1'].v, 'Ghi chú');
+  assert.equal(ordersWs['J1'].v, 'Giảm giá');
+  assert.equal(ordersWs['R1'].v, 'Ghi chú');
   assert.equal(ordersWs['A2'].v, 'DH-0001');
   assert.equal(typeof ordersWs['I2'].v, 'number');
 
@@ -786,4 +789,172 @@ test('SheetJS Excel (.xlsx) builders generate valid orders workbook and 3-sheet 
   assert.equal(financeWb.Sheets['Doanh_thu_Don_hang']['A1'].v, 'Mã đơn');
   assert.equal(financeWb.Sheets['Chi_tiet_Khoan_chi']['A1'].v, 'Ngày chi');
 });
+
+test('parseVNDInput handles plain, dotted, comma-formatted, and invalid currency strings; addShareholderWithAudit updates Cash Fund', () => {
+  assert.equal(parseVNDInput('6000000'), 6000000);
+  assert.equal(parseVNDInput('6.000.000'), 6000000);
+  assert.equal(parseVNDInput('5,500,000 đ'), 5500000);
+  assert.equal(parseVNDInput('12500'), 12500);
+  assert.equal(parseVNDInput('0'), 0);
+  assert.equal(Number.isNaN(parseVNDInput('')), true);
+  assert.equal(Number.isNaN(parseVNDInput('abc')), true);
+  assert.equal(parseVNDInput('-5000'), -1);
+
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const beforeFund = computeFundSummary(seed.shareholders, seed.expenses);
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+
+  const afterAdd = addShareholderWithAudit(
+    seed,
+    { name: 'Minh Anh', contribution: parseVNDInput('6.000.000'), note: 'Góp thêm' },
+    nganActor
+  );
+  const afterFund = computeFundSummary(afterAdd.shareholders, afterAdd.expenses);
+  assert.equal(afterFund.totalCapital, beforeFund.totalCapital + 6000000);
+  assert.equal(afterFund.currentBalance, beforeFund.currentBalance + 6000000);
+  assert.equal(afterAdd.shareholders[afterAdd.shareholders.length - 1].name, 'Minh Anh');
+});
+
+test('order optional discount deducts from total, COD, P&L, and rejects negative or excessive discounts', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+
+  // 1. Order WITHOUT discount (omitted / 0) works cleanly
+  const noDiscountRes = createOrderWithValidation(
+    seed,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Khách không KM',
+      customerPhone: '0901000222',
+      shippingAddress: '12 Tràng Thi, Hà Nội',
+      shippingMethod: ShippingMethod.PICKUP,
+      shopShippingCost: 0,
+      items: [{ productId: 'prd_tn_01', size: 'M', quantity: 2 }],
+      shippingFee: 0,
+      note: '',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    nganActor
+  );
+  assert.equal(noDiscountRes.ok, true);
+  if (!noDiscountRes.ok) return;
+  assert.equal(noDiscountRes.order.discount, undefined);
+  assert.equal(getOrderTotal(noDiscountRes.order), 2 * 1450000);
+  assert.equal(getOrderCOD(noDiscountRes.order), 2900000);
+
+  // 2. Negative discount rejected
+  const negDiscount = createOrderWithValidation(
+    seed,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Khách lỗi',
+      customerPhone: '0901000333',
+      shippingAddress: '12 Tràng Thi, Hà Nội',
+      shippingMethod: ShippingMethod.PICKUP,
+      shopShippingCost: 0,
+      items: [{ productId: 'prd_tn_01', size: 'M', quantity: 1 }],
+      shippingFee: 0,
+      discount: -50000,
+      note: '',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    nganActor
+  );
+  assert.equal(negDiscount.ok, false);
+
+  // 3. Discount exceeding subtotal + shippingFee rejected
+  const overDiscount = createOrderWithValidation(
+    seed,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Khách lỗi 2',
+      customerPhone: '0901000444',
+      shippingAddress: '12 Tràng Thi, Hà Nội',
+      shippingMethod: ShippingMethod.PICKUP,
+      shopShippingCost: 0,
+      items: [{ productId: 'prd_tn_01', size: 'M', quantity: 1 }],
+      shippingFee: 0,
+      discount: 2000000,
+      note: '',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    nganActor
+  );
+  assert.equal(overDiscount.ok, false);
+
+  // 4. Order WITH promotional discount = 200,000 on 2 * 1,450,000 = 2,700,000
+  const basePnL = computeBrandPnL(
+    seed.products,
+    seed.stockImports,
+    seed.orders,
+    seed.expenses
+  ).total.salesRevenue;
+
+  const withDiscountRes = createOrderWithValidation(
+    seed,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Khách KM 200k',
+      customerPhone: '0901000555',
+      shippingAddress: '18 Lý Thái Tổ, Hà Nội',
+      shippingMethod: ShippingMethod.VIETTEL_POST,
+      shopShippingCost: 30000,
+      items: [{ productId: 'prd_tn_01', size: 'M', quantity: 2 }],
+      shippingFee: 0,
+      discount: 200000,
+      note: 'KM khai trương',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    nganActor
+  );
+  assert.equal(withDiscountRes.ok, true);
+  if (!withDiscountRes.ok) return;
+  assert.equal(withDiscountRes.order.discount, 200000);
+  assert.equal(getOrderTotal(withDiscountRes.order), 2700000);
+  assert.equal(getOrderCOD(withDiscountRes.order), 2700000);
+
+  const afterPnL = computeBrandPnL(
+    withDiscountRes.state.products,
+    withDiscountRes.state.stockImports,
+    withDiscountRes.state.orders,
+    withDiscountRes.state.expenses
+  ).total.salesRevenue;
+  assert.equal(afterPnL, basePnL + 2700000);
+
+  // 5. Editing discount updates total, COD, and clearing discount resets to 0
+  const editedDiscount = updateOrderWithValidation(
+    withDiscountRes.state,
+    withDiscountRes.order.id,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Khách KM 200k',
+      customerPhone: '0901000555',
+      shippingAddress: '18 Lý Thái Tổ, Hà Nội',
+      shippingMethod: ShippingMethod.VIETTEL_POST,
+      shopShippingCost: 30000,
+      items: [{ productId: 'prd_tn_01', size: 'M', quantity: 2, unitPrice: 1450000 }],
+      shippingFee: 0,
+      discount: 0,
+      note: '',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    nganActor
+  );
+  assert.equal(editedDiscount.ok, true);
+  if (!editedDiscount.ok) return;
+  assert.equal(editedDiscount.order.discount, 0);
+  assert.equal(getOrderTotal(editedDiscount.order), 2900000);
+
+  // 6. Excel & CSV include discount
+  const wb = buildOrdersWorkbook([withDiscountRes.order]);
+  const ws = wb.Sheets['Danh_sach_don_hang'];
+  assert.equal(ws['J2'].v, 200000);
+  assert.equal(ws['K2'].v, 2700000);
+});
+
 

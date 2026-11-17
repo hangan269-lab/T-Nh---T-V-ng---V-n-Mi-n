@@ -36,7 +36,7 @@ function validateOrderPayload(
   ];
   const allowedKeys = new Set([
     ...requiredKeys,
-    'paymentConfirmedBy', 'paymentConfirmedAt', 'cancelledBy', 'cancelledAt',
+    'discount', 'paymentConfirmedBy', 'paymentConfirmedAt', 'cancelledBy', 'cancelledAt',
   ]);
 
   for (const req of requiredKeys) {
@@ -54,6 +54,12 @@ function validateOrderPayload(
   }
   if (!Array.isArray(data.items) || data.items.length < 1 || data.items.length > 30) {
     return { allowed: false, reason: 'PERMISSION_DENIED: items array out of bounds (1..30)' };
+  }
+  if (
+    'discount' in data &&
+    (typeof data.discount !== 'number' || data.discount < 0 || data.discount > 100000000)
+  ) {
+    return { allowed: false, reason: 'PERMISSION_DENIED: invalid discount value' };
   }
   if (options.isCreate) {
     if (data.serverCreatedAt !== options.requestTimeMs || data.serverUpdatedAt !== options.requestTimeMs) {
@@ -223,6 +229,24 @@ test('Adversarial payloads fail schema, size, path, workspace, and timestamp che
       'ord_99',
       { ...validOrder, serverCreatedAt: serverNow - 1000 },
       { existing: validOrder, requestTimeMs: serverNow }
+    ).allowed,
+    false
+  );
+
+  // 7. Optional discount: valid promotional discount allowed, negative discount rejected
+  assert.equal(
+    validateOrderPayload(
+      'ord_99',
+      { ...validOrder, discount: 200000 },
+      { isCreate: true, requestTimeMs: serverNow }
+    ).allowed,
+    true
+  );
+  assert.equal(
+    validateOrderPayload(
+      'ord_99',
+      { ...validOrder, discount: -50000 },
+      { isCreate: true, requestTimeMs: serverNow }
     ).allowed,
     false
   );

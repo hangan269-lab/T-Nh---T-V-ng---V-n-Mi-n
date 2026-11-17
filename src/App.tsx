@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Boxes,
-  Calculator,
   Download,
   History,
   LayoutDashboard,
@@ -18,7 +17,6 @@ import {
 } from 'lucide-react';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { AuditLogTab } from './components/AuditLogTab';
-import { BudgetTab } from './components/BudgetTab';
 import { ConfirmModal } from './components/ConfirmModal';
 import { DashboardTab } from './components/DashboardTab';
 import { FinanceTab } from './components/FinanceTab';
@@ -28,9 +26,9 @@ import { OrdersTab } from './components/OrdersTab';
 import { createEmptyState, createSeedState } from './data/seedData';
 import {
   AppState,
-  BudgetItem,
   Expense,
   Order,
+  Product,
   Shareholder,
   ShippingStatus,
   StockImport,
@@ -39,7 +37,6 @@ import {
 } from './types/erp';
 import {
   ActorIdentity,
-  addBudgetItemWithAudit,
   addExpenseWithAudit,
   addShareholderWithAudit,
   addStockImportWithAudit,
@@ -51,7 +48,6 @@ import {
   confirmOrderPayment,
   createOrderWithValidation,
   createUserAccountWithAudit,
-  deleteBudgetItemWithAudit,
   deleteExpenseWithAudit,
   deleteOrderWithAudit,
   deleteProductWithAudit,
@@ -72,7 +68,6 @@ import {
   SaveProductInput,
   saveProductWithValidation,
   toggleExpenseStatus,
-  updateBudgetItemWithAudit,
   updateExpenseWithAudit,
   updateOrderShipping,
   updateOrderWithValidation,
@@ -89,7 +84,7 @@ import {
   subscribeWorkspaceRealtime,
 } from './utils/firestoreSync';
 
-type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'budget' | 'audit';
+type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'audit';
 
 const SESSION_USER_KEY = 'tn_tv_vm_active_user_v1';
 
@@ -122,12 +117,6 @@ const NAV_ITEMS: Array<{
     label: 'Tài chính & Quỹ',
     subtitle: 'Vốn góp & chi phí',
     icon: Wallet,
-  },
-  {
-    id: 'budget',
-    label: 'Dự trù ngân sách',
-    subtitle: 'Kế hoạch nhập & Ads',
-    icon: Calculator,
   },
   {
     id: 'audit',
@@ -417,7 +406,7 @@ export default function App() {
 
   const handleSaveProduct = (
     productInput: SaveProductInput
-  ): { ok: true; hasStockAdjustment?: boolean } | { ok: false; error: string } => {
+  ): { ok: true; hasStockAdjustment?: boolean; product?: Product } | { ok: false; error: string } => {
     const res = saveProductWithValidation(stateRef.current, productInput, actor);
     if (!res.ok) {
       return res;
@@ -432,7 +421,7 @@ export default function App() {
     } else {
       showNotice(`Đã thêm mẫu sản phẩm mới ${res.product.code} (${res.product.name}).`);
     }
-    return { ok: true, hasStockAdjustment: res.hasStockAdjustment };
+    return { ok: true, hasStockAdjustment: res.hasStockAdjustment, product: res.product };
   };
 
   const handleArchiveProduct = (productId: string, archive: boolean) => {
@@ -578,21 +567,6 @@ export default function App() {
     return { ok: true };
   };
 
-  const handleAddBudgetItem = (item: Omit<BudgetItem, 'id'>) => {
-    commitNextState((prev) => addBudgetItemWithAudit(prev, item, actor));
-    showNotice('Đã thêm hạng mục dự trù ngân sách.');
-  };
-
-  const handleUpdateBudgetItem = (id: string, patch: Omit<BudgetItem, 'id'>) => {
-    commitNextState((prev) => updateBudgetItemWithAudit(prev, id, patch, actor));
-    showNotice('Đã cập nhật hạng mục dự trù ngân sách.');
-  };
-
-  const handleDeleteBudgetItem = (id: string) => {
-    commitNextState((prev) => deleteBudgetItemWithAudit(prev, id, actor));
-    showNotice('Đã xóa hạng mục dự trù ngân sách.');
-  };
-
   const handleExportJSON = () => {
     const today = getTodayISO();
     triggerDownload(
@@ -685,8 +659,7 @@ export default function App() {
     state.orders.length > 0 ||
     state.expenses.length > 0 ||
     state.shareholders.length > 0 ||
-    state.stockImports.length > 0 ||
-    state.budgetItems.length > 0;
+    state.stockImports.length > 0;
 
   const renderSidebarContent = () => (
     <div className="flex h-full flex-col justify-between bg-[#FFFFFF] border-r border-[#E4DFD5] p-5">
@@ -977,6 +950,7 @@ export default function App() {
               onExportOrdersCSV={handleExportOrdersCSV}
               onExportOrdersXLSX={handleExportOrdersXLSX}
               onExportViettelPostCSV={handleExportViettelPostCSV}
+              onSaveProduct={handleSaveProduct}
             />
           )}
 
@@ -1008,15 +982,6 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'budget' && (
-            <BudgetTab
-              state={state}
-              onAddBudgetItem={handleAddBudgetItem}
-              onUpdateBudgetItem={handleUpdateBudgetItem}
-              onDeleteBudgetItem={handleDeleteBudgetItem}
-            />
-          )}
-
           {activeTab === 'audit' && <AuditLogTab state={state} />}
         </main>
       </div>
@@ -1024,7 +989,7 @@ export default function App() {
       <ConfirmModal
         open={confirmClearOpen}
         title="Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)?"
-        description="Hành động này sẽ xóa sạch toàn bộ đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông, chi phí, dự trù và nhật ký hiện tại trên Cloud Firestore (giữ nguyên tài khoản thành viên) để đặt lại Dashboard, P&L và Quỹ tiền mặt về 0."
+        description="Hành động này sẽ xóa sạch toàn bộ đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông, chi phí và nhật ký hiện tại trên Cloud Firestore (giữ nguyên tài khoản thành viên) để đặt lại Dashboard, P&L và Quỹ tiền mặt về 0."
         confirmLabel="Xác nhận Reset về 0"
         onConfirm={handleClearSampleData}
         onCancel={() => setConfirmClearOpen(false)}

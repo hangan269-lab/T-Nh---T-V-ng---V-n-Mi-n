@@ -53,6 +53,8 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
     'Chi tiết mẫu & size',
     'Số lượng',
     'Tổng tiền hàng',
+    'Giảm giá',
+    'Thành tiền sau giảm',
     'Hình thức vận chuyển',
     'Cước phí VC',
     'Tiền thu hộ COD',
@@ -67,6 +69,8 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
       .map((i) => `${i.productCode} ${i.productName} (Size ${i.size}) x${i.quantity}`)
       .join('; ');
     const totalQty = o.items.reduce((sum, i) => sum + i.quantity, 0);
+    const itemsSubtotal = getOrderItemsSubtotal(o);
+    const discountAmount = o.discount || 0;
     const totalAmount = getOrderTotal(o);
     const codAmount = getOrderCOD(o);
     const noteText = o.isCancelled
@@ -82,6 +86,8 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
       o.shippingAddress,
       itemDesc,
       totalQty,
+      itemsSubtotal,
+      discountAmount,
       totalAmount,
       o.shippingMethod,
       o.shopShippingCost || 0,
@@ -98,6 +104,8 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
     (sum, o) => sum + o.items.reduce((s, i) => s + i.quantity, 0),
     0
   );
+  const sumSubtotal = activeOrders.reduce((sum, o) => sum + getOrderItemsSubtotal(o), 0);
+  const sumDiscount = activeOrders.reduce((sum, o) => sum + (o.discount || 0), 0);
   const sumTotal = activeOrders.reduce((sum, o) => sum + getOrderTotal(o), 0);
   const sumShipCost = activeOrders.reduce((sum, o) => sum + (o.shopShippingCost || 0), 0);
   const sumCOD = activeOrders.reduce((sum, o) => sum + getOrderCOD(o), 0);
@@ -111,6 +119,8 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
     '',
     '',
     sumQty,
+    sumSubtotal,
+    sumDiscount,
     sumTotal,
     '',
     sumShipCost,
@@ -123,7 +133,7 @@ export function buildOrdersWorkbook(orders: Order[]): XLSX.WorkBook {
 
   const aoa = [headers, ...dataRows, summaryRow];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  applyNumberFormat(ws, [7, 8, 10, 11], 1, aoa.length - 1);
+  applyNumberFormat(ws, [7, 8, 9, 10, 12, 13], 1, aoa.length - 1);
   autoFitColumns(ws, aoa);
 
   const wb = XLSX.utils.book_new();
@@ -213,6 +223,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
     'Chi tiết sản phẩm',
     'Tiền hàng (VNĐ)',
     'Phí ship khách trả (VNĐ)',
+    'Giảm giá (VNĐ)',
     'Tổng doanh thu đơn (VNĐ)',
     'Tiền thu hộ COD (VNĐ)',
     'Cước VC shop trả (VNĐ)',
@@ -238,6 +249,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
       desc,
       subtotal,
       o.shippingFee || 0,
+      o.discount || 0,
       total,
       cod,
       o.shopShippingCost || 0,
@@ -250,6 +262,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
 
   const s2SumSubtotal = activeOrders.reduce((s, o) => s + getOrderItemsSubtotal(o), 0);
   const s2SumShipCustomer = activeOrders.reduce((s, o) => s + (o.shippingFee || 0), 0);
+  const s2SumDiscount = activeOrders.reduce((s, o) => s + (o.discount || 0), 0);
   const s2SumTotal = activeOrders.reduce((s, o) => s + getOrderTotal(o), 0);
   const s2SumCOD = activeOrders.reduce((s, o) => s + getOrderCOD(o), 0);
   const s2SumShopShip = activeOrders.reduce((s, o) => s + (o.shopShippingCost || 0), 0);
@@ -263,6 +276,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
     '',
     s2SumSubtotal,
     s2SumShipCustomer,
+    s2SumDiscount,
     s2SumTotal,
     s2SumCOD,
     s2SumShopShip,
@@ -274,7 +288,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
 
   const s2Aoa = [s2Headers, ...s2Body, s2TotalRow];
   const ws2 = XLSX.utils.aoa_to_sheet(s2Aoa);
-  applyNumberFormat(ws2, [6, 7, 8, 9, 10], 1, s2Aoa.length - 1);
+  applyNumberFormat(ws2, [6, 7, 8, 9, 10, 11], 1, s2Aoa.length - 1);
   autoFitColumns(ws2, s2Aoa);
 
   // Sheet 3: Chi_tiet_Khoan_chi

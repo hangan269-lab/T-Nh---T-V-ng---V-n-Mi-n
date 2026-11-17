@@ -17,7 +17,9 @@ import {
 import {
   formatVND,
   getAvailableStock,
+  getProductActiveSizes,
   OrderDraftInput,
+  parseVNDInput,
 } from '../utils/finance';
 
 interface EditLine {
@@ -58,6 +60,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
   const [shippingMethod, setShippingMethod] = useState<ShippingMethod>(ShippingMethod.VIETTEL_POST);
   const [shippingStatus, setShippingStatus] = useState<ShippingStatus>(ShippingStatus.NOT_SENT);
   const [shippingFee, setShippingFee] = useState('0');
+  const [discount, setDiscount] = useState('');
   const [shopShippingCost, setShopShippingCost] = useState('0');
   const [shippingCostPayer, setShippingCostPayer] = useState<string>(DEFAULT_PAYERS[0]);
   const [weightGrams, setWeightGrams] = useState('500');
@@ -77,6 +80,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
     setShippingMethod(order.shippingMethod);
     setShippingStatus(order.shippingStatus);
     setShippingFee(String(order.shippingFee || 0));
+    setDiscount(order.discount && order.discount > 0 ? String(order.discount) : '');
     setShopShippingCost(String(order.shopShippingCost || 0));
     setShippingCostPayer(order.shippingCostPayer || DEFAULT_PAYERS[0]);
     setWeightGrams(String(order.weightGrams || 500));
@@ -140,15 +144,23 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
   const handleLineProductChange = (key: string, productId: string) => {
     const product = state.products.find((p) => p.id === productId);
     setLines((prev) =>
-      prev.map((l) =>
-        l.key === key
-          ? {
-              ...l,
-              productId,
-              unitPrice: product ? product.sellPrice : l.unitPrice,
-            }
-          : l
-      )
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        if (!product) return { ...l, productId };
+        const activeSizes = getProductActiveSizes(product, state.stockImports, ordersWithoutCurrent);
+        const nextSize: SizeOption =
+          product.brand === Brand.VAN_MIEN
+            ? 'Freesize'
+            : activeSizes.includes(l.size) && l.size !== 'Freesize'
+              ? l.size
+              : activeSizes[0] ?? 'M';
+        return {
+          ...l,
+          productId,
+          size: nextSize,
+          unitPrice: product.sellPrice,
+        };
+      })
     );
   };
 
@@ -164,7 +176,15 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
     (sum, l) => sum + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0),
     0
   );
-  const totalAmount = subtotal + (Number(shippingFee) || 0);
+  const parseOptionalDiscount = (raw: string): number => {
+    const trimmed = raw.trim();
+    if (!trimmed) return 0;
+    const parsed = parseVNDInput(trimmed);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  const discountValue = parseOptionalDiscount(discount);
+  const effectiveDiscount = Math.max(0, discountValue);
+  const totalAmount = Math.max(0, subtotal + (Number(shippingFee) || 0) - effectiveDiscount);
   const codAmount =
     order.isCancelled || paymentStatus === PaymentStatus.PAID ? 0 : totalAmount;
 
@@ -181,6 +201,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
       shippingMethod,
       shippingStatus,
       shippingFee: Number(shippingFee) || 0,
+      discount: discountValue,
       shopShippingCost: Number(shopShippingCost) || 0,
       shippingCostPayer,
       weightGrams: Number(weightGrams) || 500,
@@ -381,12 +402,14 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                 const legacyItem = order.items.find((i) => i.productId === line.productId);
                 const isKnownProduct = selectableProducts.some((p) => p.id === line.productId);
 
+                const lineTotal = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+
                 return (
                   <div
                     key={line.key}
-                    className="grid grid-cols-1 gap-3 rounded-lg border border-[#ECE7DD] bg-[#FAF8F4]/70 p-3 sm:grid-cols-12 sm:items-end"
+                    className="grid grid-cols-1 gap-3 rounded-lg border border-[#ECE7DD] bg-[#FAF8F4]/70 p-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2.4fr)_minmax(0,1.1fr)_80px_120px_145px_34px] lg:items-end"
                   >
-                    <div className="sm:col-span-5">
+                    <div className="sm:col-span-2 lg:col-span-1">
                       <label
                         htmlFor={`edit-line-prd-${line.key}`}
                         className="block text-xs font-medium text-[#57605E]"
@@ -413,7 +436,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                       </select>
                     </div>
 
-                    <div className="sm:col-span-2">
+                    <div>
                       <label
                         htmlFor={`edit-line-size-${line.key}`}
                         className="block text-xs font-medium text-[#57605E]"
@@ -436,7 +459,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                       </select>
                     </div>
 
-                    <div className="sm:col-span-2">
+                    <div>
                       <label
                         htmlFor={`edit-line-qty-${line.key}`}
                         className="block text-xs font-medium text-[#57605E]"
@@ -455,18 +478,17 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                       />
                     </div>
 
-                    <div className="sm:col-span-2">
+                    <div>
                       <label
                         htmlFor={`edit-line-price-${line.key}`}
                         className="block text-xs font-medium text-[#57605E]"
                       >
-                        Đơn giá (đ)
+                        Giá bán niêm yết (đ)
                       </label>
                       <input
                         id={`edit-line-price-${line.key}`}
                         type="number"
                         min={0}
-                        step={1000}
                         value={line.unitPrice}
                         onChange={(e) =>
                           handleLineChange(line.key, 'unitPrice', Number(e.target.value))
@@ -475,7 +497,16 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                       />
                     </div>
 
-                    <div className="flex justify-end sm:col-span-1">
+                    <div>
+                      <span className="block text-xs font-medium text-[#57605E]">
+                        Thành tiền (SL × Giá)
+                      </span>
+                      <div className="mt-1 w-full rounded-lg border border-[#0D4F43]/25 bg-[#0D4F43]/5 px-2.5 py-1.5 text-right font-mono text-sm font-semibold text-[#0D4F43] tabular-nums">
+                        {formatVND(lineTotal)}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
                       <button
                         type="button"
                         onClick={() => handleRemoveLine(line.key)}
@@ -492,8 +523,8 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
             </div>
           </div>
 
-          {/* Cước phí, thanh toán & ghi chú */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+          {/* Cước phí, giảm giá, thanh toán & ghi chú */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label htmlFor="edit-ord-ship-fee" className="block text-xs font-medium text-[#57605E]">
                 Phí ship khách trả (đ)
@@ -502,10 +533,24 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                 id="edit-ord-ship-fee"
                 type="number"
                 min={0}
-                step={1000}
                 value={shippingFee}
                 onChange={(e) => setShippingFee(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="edit-ord-discount" className="block text-xs font-medium text-[#57605E]">
+                Giảm giá (đ) <span className="font-normal text-[#8A918E]">(Tuỳ chọn)</span>
+              </label>
+              <input
+                id="edit-ord-discount"
+                type="text"
+                inputMode="numeric"
+                placeholder="0 (Nếu có KM)"
+                value={discount}
+                onChange={(e) => setDiscount(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-2 font-mono text-sm placeholder:font-sans placeholder:text-xs placeholder:text-[#8A918E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
               />
             </div>
 
@@ -517,7 +562,6 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
                 id="edit-ord-shop-cost"
                 type="number"
                 min={0}
-                step={1000}
                 value={shopShippingCost}
                 onChange={(e) => setShopShippingCost(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
@@ -549,8 +593,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
               <input
                 id="edit-ord-weight"
                 type="number"
-                min={50}
-                step={50}
+                min={1}
                 value={weightGrams}
                 onChange={(e) => setWeightGrams(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
@@ -572,7 +615,7 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
               </select>
             </div>
 
-            <div>
+            <div className="sm:col-span-2">
               <label htmlFor="edit-ord-note" className="block text-xs font-medium text-[#57605E]">
                 Ghi chú
               </label>
@@ -587,7 +630,21 @@ export const OrderEditModal: React.FC<OrderEditModalProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#ECE7DD] pt-4">
-            <div className="flex flex-wrap items-center gap-6 text-sm text-[#57605E]">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-[#57605E]">
+              <div>
+                Tiền hàng:{' '}
+                <span className="font-mono font-medium text-[#1A1F1E] tabular-nums">
+                  {formatVND(subtotal)}
+                </span>
+              </div>
+              {effectiveDiscount > 0 && (
+                <div>
+                  Giảm giá:{' '}
+                  <span className="font-mono font-medium text-[#A63429] tabular-nums">
+                    -{formatVND(effectiveDiscount)}
+                  </span>
+                </div>
+              )}
               <div>
                 Tổng thu đơn:{' '}
                 <span className="font-mono text-lg font-semibold text-[#1A1F1E] tabular-nums">

@@ -73,6 +73,7 @@
         "weightGrams": { "type": "number" },
         "items": { "type": "array", "description": "Order line items (1..30)" },
         "shippingFee": { "type": "number" },
+        "discount": { "type": "number", "description": "Optional promotional order discount in VND" },
         "note": { "type": "string", "maxLength": 500 },
         "paymentStatus": { "type": "string", "enum": ["Chưa thanh toán", "Đã thanh toán"] },
         "isCancelled": { "type": "boolean" },

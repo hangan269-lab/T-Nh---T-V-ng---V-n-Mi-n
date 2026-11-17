@@ -81,7 +81,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="flex items-start gap-2.5">
               <Cloud className="mt-0.5 h-4 w-4 shrink-0 text-[#0D4F43]" />
               <span>
-                Đồng bộ đa thiết bị thời gian thực qua <strong className="text-[#1A1F1E]">Firebase Firestore</strong> (Đơn hàng, Kho, Nhập kho, Thu Chi, Quỹ, Dự trù, Nhật ký).
+                Đồng bộ đa thiết bị thời gian thực qua <strong className="text-[#1A1F1E]">Firebase Firestore</strong> (Đơn hàng, Kho, Nhập kho, Thu Chi, Quỹ, Nhật ký).
               </span>
             </div>
             <div className="flex items-start gap-2.5">

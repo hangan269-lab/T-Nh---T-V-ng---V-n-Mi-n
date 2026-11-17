@@ -17,6 +17,7 @@ import {
   formatDateVN,
   formatVND,
   getTodayISO,
+  parseVNDInput,
 } from '../utils/finance';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -56,10 +57,12 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [shName, setShName] = useState('');
   const [shContribution, setShContribution] = useState('');
   const [shNote, setShNote] = useState('');
+  const [shError, setShError] = useState<string | null>(null);
   const [editingShId, setEditingShId] = useState<string | null>(null);
   const [editShName, setEditShName] = useState('');
   const [editShContribution, setEditShContribution] = useState('');
   const [editShNote, setEditShNote] = useState('');
+  const [editShError, setEditShError] = useState<string | null>(null);
   const [deleteShareholderTarget, setDeleteShareholderTarget] = useState<Shareholder | null>(null);
 
   // Expense form
@@ -71,6 +74,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [expPaidBy, setExpPaidBy] = useState<string>(DEFAULT_PAYERS[0]);
   const [expReceipt, setExpReceipt] = useState('');
   const [expStatus, setExpStatus] = useState<ExpenseStatus>(ExpenseStatus.PENDING);
+  const [expError, setExpError] = useState<string | null>(null);
 
   // Expense inline edit & delete confirmation
   const [editingExpId, setEditingExpId] = useState<string | null>(null);
@@ -82,6 +86,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [editExpPaidBy, setEditExpPaidBy] = useState('');
   const [editExpReceipt, setEditExpReceipt] = useState('');
   const [editExpStatus, setEditExpStatus] = useState<ExpenseStatus>(ExpenseStatus.PENDING);
+  const [editExpError, setEditExpError] = useState<string | null>(null);
   const [deleteExpenseTarget, setDeleteExpenseTarget] = useState<Expense | null>(null);
 
   // Filters
@@ -98,8 +103,16 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
 
   const handleShareholderSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const amount = Number(shContribution);
-    if (!shName.trim() || !Number.isFinite(amount) || amount <= 0) return;
+    setShError(null);
+    if (!shName.trim()) {
+      setShError('Vui lòng nhập tên cổ đông.');
+      return;
+    }
+    const amount = parseVNDInput(shContribution);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setShError('Vui lòng nhập số tiền góp hợp lệ lớn hơn 0 đ (ví dụ: 6000000 hoặc 6.000.000).');
+      return;
+    }
     onAddShareholder({
       name: shName.trim(),
       contribution: Math.round(amount),
@@ -113,8 +126,16 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
 
   const handleExpenseSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const amount = Number(expAmount);
-    if (!expDetail.trim() || !Number.isFinite(amount) || amount <= 0) return;
+    setExpError(null);
+    if (!expDetail.trim()) {
+      setExpError('Vui lòng nhập chi tiết khoản chi.');
+      return;
+    }
+    const amount = parseVNDInput(expAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setExpError('Vui lòng nhập số tiền chi hợp lệ lớn hơn 0 đ.');
+      return;
+    }
     onAddExpense({
       date: expDate,
       category: expCategory,
@@ -135,11 +156,20 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
     setEditShName(sh.name);
     setEditShContribution(String(sh.contribution));
     setEditShNote(sh.note || '');
+    setEditShError(null);
   };
 
   const saveEditShareholder = (id: string) => {
-    const amount = Number(editShContribution);
-    if (!editShName.trim() || !Number.isFinite(amount) || amount < 0) return;
+    setEditShError(null);
+    if (!editShName.trim()) {
+      setEditShError('Tên cổ đông không được để trống.');
+      return;
+    }
+    const amount = parseVNDInput(editShContribution);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setEditShError('Số tiền góp không hợp lệ.');
+      return;
+    }
     onUpdateShareholder(id, {
       name: editShName.trim(),
       contribution: Math.round(amount),
@@ -158,11 +188,20 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
     setEditExpPaidBy(exp.paidBy);
     setEditExpReceipt(exp.receiptNote || '');
     setEditExpStatus(exp.status);
+    setEditExpError(null);
   };
 
   const saveEditExpense = (id: string) => {
-    const amount = Number(editExpAmount);
-    if (!editExpDetail.trim() || !Number.isFinite(amount) || amount < 0) return;
+    setEditExpError(null);
+    if (!editExpDetail.trim()) {
+      setEditExpError('Chi tiết khoản chi không được để trống.');
+      return;
+    }
+    const amount = parseVNDInput(editExpAmount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setEditExpError('Số tiền chi không hợp lệ.');
+      return;
+    }
     onUpdateExpense(id, {
       date: editExpDate,
       category: editExpCategory,
@@ -210,7 +249,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
             {formatVND(fund.currentBalance, { parenthesesForNegative: true })}
           </div>
           <div className="mt-1 text-xs text-[#57605E]">
-            Tự động đồng bộ sang tab Tổng quan & Dự trù
+            Tự động đồng bộ sang tab Tổng quan &amp; P&amp;L
           </div>
         </div>
       </section>
@@ -228,7 +267,10 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => setShowShareholderForm((v) => !v)}
+            onClick={() => {
+              setShError(null);
+              setShowShareholderForm((v) => !v);
+            }}
             className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -239,66 +281,91 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
         {showShareholderForm && (
           <form
             onSubmit={handleShareholderSubmit}
-            className="mt-4 grid grid-cols-1 gap-3 rounded-lg border border-[#ECE7DD] bg-[#FAF8F4] p-4 sm:grid-cols-4 sm:items-end"
+            className="mt-4 space-y-3 rounded-lg border border-[#ECE7DD] bg-[#FAF8F4] p-4"
           >
-            <div>
-              <label htmlFor="sh-name" className="block text-xs font-medium text-[#57605E]">
-                Tên cổ đông
-              </label>
-              <input
-                id="sh-name"
-                type="text"
-                placeholder="Ví dụ: Linh"
-                value={shName}
-                onChange={(e) => setShName(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm focus:border-[#0D4F43] focus:outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="sh-amount" className="block text-xs font-medium text-[#57605E]">
-                Số tiền góp (đ)
-              </label>
-              <input
-                id="sh-amount"
-                type="number"
-                min={1000}
-                step={100000}
-                placeholder="6000000"
-                value={shContribution}
-                onChange={(e) => setShContribution(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="sh-note" className="block text-xs font-medium text-[#57605E]">
-                Ghi chú
-              </label>
-              <input
-                id="sh-note"
-                type="text"
-                placeholder="Cổ đông góp đợt 2..."
-                value={shNote}
-                onChange={(e) => setShNote(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm focus:border-[#0D4F43] focus:outline-none"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="submit"
-                className="flex-1 rounded-lg bg-[#0D4F43] px-4 py-2 text-sm font-medium text-white hover:bg-[#093B32]"
+            {shError && (
+              <div
+                role="alert"
+                className="rounded-lg border border-[#A63429]/30 bg-[#A63429]/5 px-3 py-2 text-xs font-medium text-[#A63429]"
               >
-                Lưu
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowShareholderForm(false)}
-                aria-label="Đóng"
-                className="rounded-lg border border-[#E4DFD5] bg-white p-2 text-[#57605E] hover:bg-[#F3EFE6]"
-              >
-                <X className="h-4 w-4" />
-              </button>
+                {shError}
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:items-end">
+              <div>
+                <label htmlFor="sh-name" className="block text-xs font-medium text-[#57605E]">
+                  Tên cổ đông
+                </label>
+                <input
+                  id="sh-name"
+                  type="text"
+                  placeholder="Ví dụ: Linh"
+                  value={shName}
+                  onChange={(e) => {
+                    setShName(e.target.value);
+                    setShError(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm focus:border-[#0D4F43] focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="sh-amount" className="block text-xs font-medium text-[#57605E]">
+                  Số tiền góp (đ){' '}
+                  {Number.isFinite(parseVNDInput(shContribution)) &&
+                    parseVNDInput(shContribution) > 0 && (
+                      <span className="font-mono text-[#0D4F43]">
+                        ({formatVND(parseVNDInput(shContribution))})
+                      </span>
+                    )}
+                </label>
+                <input
+                  id="sh-amount"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="6000000 hoặc 6.000.000"
+                  value={shContribution}
+                  onChange={(e) => {
+                    const cleaned = e.target.value.replace(/[^\d.,\s]/g, '');
+                    setShContribution(cleaned);
+                    setShError(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="sh-note" className="block text-xs font-medium text-[#57605E]">
+                  Ghi chú
+                </label>
+                <input
+                  id="sh-note"
+                  type="text"
+                  placeholder="Cổ đông góp đợt 2..."
+                  value={shNote}
+                  onChange={(e) => setShNote(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm focus:border-[#0D4F43] focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 rounded-lg bg-[#0D4F43] px-4 py-2 text-sm font-medium text-white hover:bg-[#093B32]"
+                >
+                  Lưu
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShError(null);
+                    setShowShareholderForm(false);
+                  }}
+                  aria-label="Đóng"
+                  className="rounded-lg border border-[#E4DFD5] bg-white p-2 text-[#57605E] hover:bg-[#F3EFE6]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </form>
         )}
@@ -368,6 +435,14 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                     {isEditingSh && (
                       <tr className="bg-[#FAF8F4]">
                         <td colSpan={5} className="px-4 py-3">
+                          {editShError && (
+                            <div
+                              role="alert"
+                              className="mb-2 rounded-lg border border-[#A63429]/30 bg-[#A63429]/5 px-3 py-1.5 text-xs font-medium text-[#A63429]"
+                            >
+                              {editShError}
+                            </div>
+                          )}
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 sm:items-end">
                             <div>
                               <label
@@ -380,7 +455,10 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                                 id={`edit-sh-name-${sh.id}`}
                                 type="text"
                                 value={editShName}
-                                onChange={(e) => setEditShName(e.target.value)}
+                                onChange={(e) => {
+                                  setEditShName(e.target.value);
+                                  setEditShError(null);
+                                }}
                                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
                               />
                             </div>
@@ -389,15 +467,22 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                                 htmlFor={`edit-sh-amount-${sh.id}`}
                                 className="block text-xs font-medium text-[#57605E]"
                               >
-                                Số tiền góp (đ)
+                                Số tiền góp (đ){' '}
+                                {Number.isFinite(parseVNDInput(editShContribution)) && (
+                                  <span className="font-mono text-[#0D4F43]">
+                                    ({formatVND(parseVNDInput(editShContribution))})
+                                  </span>
+                                )}
                               </label>
                               <input
                                 id={`edit-sh-amount-${sh.id}`}
-                                type="number"
-                                min={0}
-                                step={100000}
+                                type="text"
+                                inputMode="numeric"
                                 value={editShContribution}
-                                onChange={(e) => setEditShContribution(e.target.value)}
+                                onChange={(e) => {
+                                  setEditShContribution(e.target.value.replace(/[^\d.,\s]/g, ''));
+                                  setEditShError(null);
+                                }}
                                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
                               />
                             </div>
@@ -488,6 +573,14 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
               Người nhập liệu: <strong className="text-[#0D4F43]">{currentUser.name}</strong>
             </span>
           </div>
+          {expError && (
+            <div
+              role="alert"
+              className="mt-3 rounded-lg border border-[#A63429]/30 bg-[#A63429]/5 px-3 py-2 text-xs font-medium text-[#A63429]"
+            >
+              {expError}
+            </div>
+          )}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label htmlFor="exp-date" className="block text-xs font-medium text-[#57605E]">
@@ -542,16 +635,23 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
 
             <div>
               <label htmlFor="exp-amount" className="block text-xs font-medium text-[#57605E]">
-                Số tiền (đ)
+                Số tiền (đ){' '}
+                {Number.isFinite(parseVNDInput(expAmount)) && parseVNDInput(expAmount) > 0 && (
+                  <span className="font-mono text-[#0D4F43]">
+                    ({formatVND(parseVNDInput(expAmount))})
+                  </span>
+                )}
               </label>
               <input
                 id="exp-amount"
-                type="number"
-                min={1000}
-                step={1000}
+                type="text"
+                inputMode="numeric"
                 placeholder="500000"
                 value={expAmount}
-                onChange={(e) => setExpAmount(e.target.value)}
+                onChange={(e) => {
+                  setExpAmount(e.target.value.replace(/[^\d.,\s]/g, ''));
+                  setExpError(null);
+                }}
                 className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
                 required
               />
@@ -772,6 +872,14 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                       {isEditingExp && (
                         <tr className="bg-[#FAF8F4]">
                           <td colSpan={7} className="px-4 py-4">
+                            {editExpError && (
+                              <div
+                                role="alert"
+                                className="mb-3 rounded-lg border border-[#A63429]/30 bg-[#A63429]/5 px-3 py-1.5 text-xs font-medium text-[#A63429]"
+                              >
+                                {editExpError}
+                              </div>
+                            )}
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6 sm:items-end">
                               <div>
                                 <label
@@ -859,11 +967,13 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                                 </label>
                                 <input
                                   id={`edit-exp-amount-${exp.id}`}
-                                  type="number"
-                                  min={0}
-                                  step={1000}
+                                  type="text"
+                                  inputMode="numeric"
                                   value={editExpAmount}
-                                  onChange={(e) => setEditExpAmount(e.target.value)}
+                                  onChange={(e) => {
+                                    setEditExpAmount(e.target.value.replace(/[^\d.,\s]/g, ''));
+                                    setEditExpError(null);
+                                  }}
                                   className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
                                 />
                               </div>

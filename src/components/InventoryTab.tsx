@@ -368,7 +368,6 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                     id="imp-cost"
                     type="number"
                     min={0}
-                    step={1000}
                     value={impUnitCost}
                     onChange={(e) => setImpUnitCost(e.target.value)}
                     className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] px-2.5 py-2 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
@@ -842,7 +841,6 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                                     id={`edit-imp-cost-${imp.id}`}
                                     type="number"
                                     min={0}
-                                    step={1000}
                                     value={editImpCost}
                                     onChange={(e) => setEditImpCost(e.target.value)}
                                     className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"

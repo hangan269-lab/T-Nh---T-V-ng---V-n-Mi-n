@@ -307,7 +307,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 id="prd-modal-cost"
                 type="number"
                 min={0}
-                step={1000}
                 placeholder="650000"
                 value={costPrice}
                 onChange={(e) => setCostPrice(e.target.value)}
@@ -324,7 +323,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
                 id="prd-modal-sell"
                 type="number"
                 min={0}
-                step={1000}
                 placeholder="1450000"
                 value={sellPrice}
                 onChange={(e) => setSellPrice(e.target.value)}

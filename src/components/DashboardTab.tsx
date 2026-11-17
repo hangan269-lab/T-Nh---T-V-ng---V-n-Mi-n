@@ -16,7 +16,7 @@ interface DashboardTabProps {
   state: AppState;
   isAdmin?: boolean;
   hasAnyData?: boolean;
-  onNavigateTab: (tab: 'orders' | 'inventory' | 'finance' | 'budget') => void;
+  onNavigateTab: (tab: 'orders' | 'inventory' | 'finance') => void;
   onConfirmPayment: (orderId: string) => void;
   onExportPnLCSV: () => void;
   onExportFinanceXLSX: () => void;

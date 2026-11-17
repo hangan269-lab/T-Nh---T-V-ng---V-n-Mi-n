@@ -155,6 +155,12 @@ export function sanitizeOrderPayload(o: Order): Record<string, unknown> {
     createdAt: clampStr(o.createdAt || new Date().toISOString(), BLUEPRINT_LIMITS.TIMESTAMP_MAX),
     createdBy: clampStr(o.createdBy || 'Hệ thống', BLUEPRINT_LIMITS.NAME_MAX),
   };
+  if (o.discount !== undefined && Number.isFinite(Number(o.discount))) {
+    const cleanDiscount = clampNum(o.discount, 0, 100000000);
+    if (cleanDiscount > 0 || o.discount === 0) {
+      doc.discount = cleanDiscount;
+    }
+  }
   const confirmedBy = clampOptStr(o.paymentConfirmedBy, BLUEPRINT_LIMITS.NAME_MAX);
   if (confirmedBy !== undefined) doc.paymentConfirmedBy = confirmedBy;
   const confirmedAt = clampOptStr(o.paymentConfirmedAt, BLUEPRINT_LIMITS.TIMESTAMP_MAX);

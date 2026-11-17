@@ -84,6 +84,15 @@ export function formatCompactVND(amount: number): string {
   return rounded < 0 ? `-${absFormatted}đ` : `${absFormatted}đ`;
 }
 
+export function parseVNDInput(raw: string): number {
+  const trimmed = raw.trim();
+  if (!trimmed) return NaN;
+  if (trimmed.startsWith('-')) return -1;
+  const digits = trimmed.replace(/[^\d]/g, '');
+  if (!digits) return NaN;
+  return Number(digits);
+}
+
 export function createAuditEntry(input: {
   actor: ActorIdentity;
   category: AuditCategory;
@@ -346,12 +355,17 @@ export function getOrderItemsSubtotal(order: Pick<Order, 'items'>): number {
   return order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 }
 
-export function getOrderTotal(order: Pick<Order, 'items' | 'shippingFee'>): number {
-  return getOrderItemsSubtotal(order) + (order.shippingFee || 0);
+export function getOrderTotal(
+  order: Pick<Order, 'items' | 'shippingFee' | 'discount'>
+): number {
+  return Math.max(
+    0,
+    getOrderItemsSubtotal(order) + (order.shippingFee || 0) - (order.discount || 0)
+  );
 }
 
 export function getOrderCOD(
-  order: Pick<Order, 'items' | 'shippingFee' | 'paymentStatus' | 'isCancelled'>
+  order: Pick<Order, 'items' | 'shippingFee' | 'discount' | 'paymentStatus' | 'isCancelled'>
 ): number {
   if (order.isCancelled || order.paymentStatus === PaymentStatus.PAID) {
     return 0;
@@ -757,6 +771,7 @@ export interface OrderDraftInput {
     unitPrice?: number;
   }>;
   shippingFee: number;
+  discount?: number;
   note: string;
   paymentStatus: PaymentStatus;
 }
@@ -798,6 +813,11 @@ export function createOrderWithValidation(
   if (draft.shopShippingCost < 0 || Number.isNaN(draft.shopShippingCost)) {
     return { ok: false, error: 'Cước phí vận chuyển shop trả không hợp lệ.' };
   }
+  const rawDiscount = draft.discount ?? 0;
+  if (!Number.isFinite(rawDiscount) || rawDiscount < 0) {
+    return { ok: false, error: 'Số tiền giảm giá không hợp lệ.' };
+  }
+  const discount = Math.round(rawDiscount);
 
   const weightGrams = draft.weightGrams ?? 500;
   if (!Number.isFinite(weightGrams) || weightGrams <= 0) {
@@ -867,6 +887,15 @@ export function createOrderWithValidation(
     }
   }
 
+  const itemsSubtotal = resolvedItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
+  const grossTotal = itemsSubtotal + Math.round(draft.shippingFee || 0);
+  if (discount > grossTotal) {
+    return {
+      ok: false,
+      error: 'Số tiền giảm giá không được lớn hơn tổng tiền hàng và phí ship.',
+    };
+  }
+
   const nowISO = new Date().toISOString();
   let maxOrderNum = 0;
   for (const o of state.orders) {
@@ -893,6 +922,7 @@ export function createOrderWithValidation(
     weightGrams: Math.round(weightGrams),
     items: resolvedItems,
     shippingFee: Math.round(draft.shippingFee || 0),
+    ...(discount > 0 ? { discount } : {}),
     note: draft.note.trim(),
     paymentStatus: draft.paymentStatus,
     isCancelled: false,
@@ -1162,6 +1192,11 @@ export function updateOrderWithValidation(
   if (draft.shopShippingCost < 0 || Number.isNaN(draft.shopShippingCost)) {
     return { ok: false, error: 'Cước phí vận chuyển shop trả không hợp lệ.' };
   }
+  const rawDiscount = draft.discount ?? 0;
+  if (!Number.isFinite(rawDiscount) || rawDiscount < 0) {
+    return { ok: false, error: 'Số tiền giảm giá không hợp lệ.' };
+  }
+  const discount = Math.round(rawDiscount);
 
   const weightGrams = draft.weightGrams ?? 500;
   if (!Number.isFinite(weightGrams) || weightGrams <= 0) {
@@ -1252,6 +1287,15 @@ export function updateOrderWithValidation(
     }
   }
 
+  const itemsSubtotal = resolvedItems.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
+  const grossTotal = itemsSubtotal + Math.round(draft.shippingFee || 0);
+  if (discount > grossTotal) {
+    return {
+      ok: false,
+      error: 'Số tiền giảm giá không được lớn hơn tổng tiền hàng và phí ship.',
+    };
+  }
+
   const nowISO = new Date().toISOString();
   const isNowPaid = draft.paymentStatus === PaymentStatus.PAID;
   const updatedOrder: Order = {
@@ -1268,6 +1312,7 @@ export function updateOrderWithValidation(
     weightGrams: Math.round(weightGrams),
     items: resolvedItems,
     shippingFee: Math.round(draft.shippingFee || 0),
+    discount: discount > 0 ? discount : prevOrder.discount ? 0 : undefined,
     note: draft.note.trim(),
     paymentStatus: draft.paymentStatus,
     paymentConfirmedBy: isNowPaid
@@ -2216,6 +2261,7 @@ function normalizeImportedOrder(o: Partial<Order> & Record<string, unknown>): Or
     weightGrams: Number(o.weightGrams) > 0 ? Number(o.weightGrams) : 500,
     items: Array.isArray(o.items) ? (o.items as OrderItem[]) : [],
     shippingFee: Number(o.shippingFee) || 0,
+    ...(Number(o.discount) > 0 ? { discount: Math.round(Number(o.discount)) } : {}),
     note: String(o.note ?? ''),
     paymentStatus: (o.paymentStatus as PaymentStatus) ?? PaymentStatus.UNPAID,
     isCancelled: Boolean(o.isCancelled),
@@ -2311,6 +2357,7 @@ export function exportOrdersToCSV(orders: Order[]): string {
     'Cước shop trả (VND)',
     'Sản phẩm',
     'Phí ship khách trả',
+    'Giảm giá (VND)',
     'Tổng thu (VND)',
     'Tiền thu hộ COD (VND)',
     'Thanh toán',
@@ -2336,6 +2383,7 @@ export function exportOrdersToCSV(orders: Order[]): string {
       escapeCSV(o.shopShippingCost),
       escapeCSV(itemsSummary),
       escapeCSV(o.shippingFee),
+      escapeCSV(o.discount || 0),
       escapeCSV(getOrderTotal(o)),
       escapeCSV(getOrderCOD(o)),
       escapeCSV(o.paymentStatus),

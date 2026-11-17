@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   ClipboardPaste,
@@ -23,6 +23,7 @@ import {
   DEFAULT_PAYERS,
   Order,
   PaymentStatus,
+  Product,
   ShippingMethod,
   ShippingStatus,
   SizeOption,
@@ -35,13 +36,17 @@ import {
   getAvailableStock,
   getOrderCOD,
   getOrderTotal,
+  getProductActiveSizes,
   getTodayISO,
   OrderDraftInput,
   OrderShippingUpdate,
+  parseVNDInput,
+  SaveProductInput,
 } from '../utils/finance';
 import { parseQuickOrderText } from '../utils/orderParser';
 import { ConfirmModal } from './ConfirmModal';
 import { OrderEditModal } from './OrderEditModal';
+import { ProductModal } from './ProductModal';
 
 type OrderFilter = 'all' | 'today' | 'unpaid' | 'paid' | 'vtp_not_sent';
 
@@ -64,6 +69,9 @@ interface OrdersTabProps {
   onExportOrdersCSV: () => void;
   onExportOrdersXLSX: (ordersToExport: Order[]) => void;
   onExportViettelPostCSV: (ordersToExport: Order[]) => void;
+  onSaveProduct?: (
+    input: SaveProductInput
+  ) => { ok: true; hasStockAdjustment?: boolean; product?: Product } | { ok: false; error: string };
 }
 
 interface DraftLine {
@@ -90,6 +98,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   onExportOrdersCSV,
   onExportOrdersXLSX,
   onExportViettelPostCSV,
+  onSaveProduct,
 }) => {
   const todayISO = getTodayISO();
   const [filter, setFilter] = useState<OrderFilter>('all');
@@ -128,21 +137,56 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [shippingCostPayer, setShippingCostPayer] = useState<string>(DEFAULT_PAYERS[0]);
   const [weightGrams, setWeightGrams] = useState<string>('500');
   const [shippingFee, setShippingFee] = useState<string>('0');
+  const [discount, setDiscount] = useState<string>('');
   const [note, setNote] = useState('');
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>(PaymentStatus.UNPAID);
   const [formError, setFormError] = useState<string | null>(null);
   const [quickPasteText, setQuickPasteText] = useState('');
   const [quickParseNotice, setQuickParseNotice] = useState<string | null>(null);
+  const [quickProductModalOpen, setQuickProductModalOpen] = useState(false);
+
+  const activeProducts = useMemo(
+    () => state.products.filter((p) => !p.isArchived),
+    [state.products]
+  );
 
   const brandProducts = useMemo(
-    () => state.products.filter((p) => p.brand === brand && !p.isArchived),
-    [state.products, brand]
+    () => activeProducts.filter((p) => p.brand === brand),
+    [activeProducts, brand]
   );
+
+  const otherBrandProducts = useMemo(
+    () => activeProducts.filter((p) => p.brand !== brand),
+    [activeProducts, brand]
+  );
+
+  const getProductTotalStock = (p: Product): number =>
+    getProductActiveSizes(p, state.stockImports, state.orders).reduce(
+      (sum, s) => sum + getAvailableStock(p.id, s, state.products, state.stockImports, state.orders),
+      0
+    );
+
+  const pickBestSizeForProduct = (p: Product, preferred?: SizeOption): SizeOption => {
+    if (p.brand === Brand.VAN_MIEN) return 'Freesize';
+    const sizes = getProductActiveSizes(p, state.stockImports, state.orders);
+    if (preferred && preferred !== 'Freesize') {
+      const avail = getAvailableStock(p.id, preferred, state.products, state.stockImports, state.orders);
+      if (avail > 0) return preferred;
+    }
+    const inStockSize = sizes.find(
+      (s) => s !== 'Freesize' && getAvailableStock(p.id, s, state.products, state.stockImports, state.orders) > 0
+    );
+    return inStockSize ?? (preferred && preferred !== 'Freesize' ? preferred : 'M');
+  };
 
   const makeDefaultLine = (targetBrand: Brand): DraftLine => {
     const prods = state.products.filter((p) => p.brand === targetBrand && !p.isArchived);
-    const first = prods[0];
-    const defaultSize: SizeOption = targetBrand === Brand.VAN_MIEN ? 'Freesize' : 'M';
+    const first = prods[0] ?? state.products.find((p) => !p.isArchived);
+    const defaultSize: SizeOption = first
+      ? pickBestSizeForProduct(first)
+      : targetBrand === Brand.VAN_MIEN
+        ? 'Freesize'
+        : 'M';
     return {
       key: `line_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       productId: first?.id ?? '',
@@ -153,6 +197,27 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   };
 
   const [lines, setLines] = useState<DraftLine[]>(() => [makeDefaultLine(Brand.TO_NHA)]);
+
+  useEffect(() => {
+    if (activeProducts.length === 0) return;
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((line) => {
+        const currentProduct = activeProducts.find((p) => p.id === line.productId);
+        if (currentProduct) return line;
+        const fallback = brandProducts[0] ?? activeProducts[0];
+        if (!fallback) return line;
+        changed = true;
+        return {
+          ...line,
+          productId: fallback.id,
+          size: pickBestSizeForProduct(fallback, line.size),
+          unitPrice: fallback.sellPrice,
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [isCreateOpen, activeProducts, brandProducts]);
 
   const handleApplyQuickPaste = (rawInput: string) => {
     const trimmed = rawInput.trim();
@@ -238,12 +303,18 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
 
   const handleLineProductChange = (key: string, productId: string) => {
     const product = state.products.find((p) => p.id === productId);
+    const targetIndex = lines.findIndex((l) => l.key === key);
+    if (product && targetIndex === 0 && product.brand !== brand) {
+      setBrand(product.brand);
+    }
+    setFormError(null);
     setLines((prev) =>
       prev.map((l) =>
         l.key === key
           ? {
               ...l,
               productId,
+              size: product ? pickBestSizeForProduct(product, l.size) : l.size,
               unitPrice: product ? product.sellPrice : l.unitPrice,
             }
           : l
@@ -263,7 +334,18 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     (sum, l) => sum + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0),
     0
   );
-  const draftTotal = draftItemsSubtotal + (Number(shippingFee) || 0);
+  const parseOptionalDiscount = (raw: string): number => {
+    const trimmed = raw.trim();
+    if (!trimmed) return 0;
+    const parsed = parseVNDInput(trimmed);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  const draftDiscount = parseOptionalDiscount(discount);
+  const effectiveDraftDiscount = Math.max(0, draftDiscount);
+  const draftTotal = Math.max(
+    0,
+    draftItemsSubtotal + (Number(shippingFee) || 0) - effectiveDraftDiscount
+  );
   const draftCOD = paymentStatus === PaymentStatus.PAID ? 0 : draftTotal;
 
   const handleSubmitOrder = (e: React.FormEvent) => {
@@ -288,6 +370,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
         unitPrice: Number(l.unitPrice),
       })),
       shippingFee: Number(shippingFee) || 0,
+      discount: draftDiscount,
       note,
       paymentStatus,
     });
@@ -306,6 +389,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     setShopShippingCost('0');
     setWeightGrams('500');
     setShippingFee('0');
+    setDiscount('');
     setNote('');
     setPaymentStatus(PaymentStatus.UNPAID);
     setQuickPasteText('');
@@ -674,47 +758,104 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
 
             {/* Danh sách mẫu đặt */}
             <div className="border-t border-[#ECE7DD] pt-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs font-semibold text-[#1A1F1E]">
-                  Sản phẩm trong đơn ({lines.length})
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAddLine}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-3 py-1.5 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#F3EFE6] whitespace-nowrap shrink-0"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Thêm mẫu khác
-                </button>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-semibold text-[#1A1F1E]">
+                    Sản phẩm trong đơn ({lines.length})
+                  </span>
+                  <span className="ml-2 text-[11px] text-[#57605E]">
+                    Chọn mẫu sẽ tự động điền giá bán và trừ tồn kho khi lưu đơn
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {onSaveProduct && (
+                    <button
+                      type="button"
+                      onClick={() => setQuickProductModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-white px-3 py-1.5 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#0D4F43]/5 whitespace-nowrap shrink-0"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Thêm nhanh mẫu mới
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddLine}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-3 py-1.5 text-xs font-medium text-[#0D4F43] transition-colors hover:bg-[#F3EFE6] whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Thêm mẫu khác
+                  </button>
+                </div>
               </div>
 
-              {brandProducts.length === 0 ? (
-                <p className="mt-3 rounded-lg bg-[#FAF8F4] p-4 text-sm text-[#A63429]">
-                  Nhánh {brand} chưa có mẫu sản phẩm nào trong Danh mục. Vui lòng thêm mẫu ở tab Kho hàng trước khi tạo đơn.
-                </p>
+              {activeProducts.length === 0 ? (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#B45309]/25 bg-[#FEF3C7]/40 px-4 py-3 text-xs text-[#92400E]">
+                  <span>
+                    Kho hàng hiện chưa có mẫu sản phẩm nào. Hãy bấm <strong>&ldquo;Thêm nhanh mẫu mới&rdquo;</strong> ngay bên cạnh hoặc tạo mẫu ở tab Kho hàng &amp; Mẫu.
+                  </span>
+                  {onSaveProduct && (
+                    <button
+                      type="button"
+                      onClick={() => setQuickProductModalOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#093B32] whitespace-nowrap shrink-0"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Tạo mẫu ngay
+                    </button>
+                  )}
+                </div>
               ) : (
-                <div className="mt-3 space-y-3">
-                  {lines.map((line, index) => {
-                    const available = line.productId
-                      ? getAvailableStock(
-                          line.productId,
-                          line.size,
-                          state.products,
-                          state.stockImports,
-                          state.orders
+                brandProducts.length === 0 && (
+                  <p className="mt-3 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-4 py-2.5 text-xs text-[#57605E]">
+                    Nhánh <strong className="text-[#1A1F1E]">{brand}</strong> chưa có mẫu nào — bạn có thể chọn mẫu từ các nhánh khác ngay trong ô chọn mẫu bên dưới hoặc thêm mẫu mới.
+                  </p>
+                )
+              )}
+
+              <div className="mt-3 space-y-3">
+                {lines.map((line, index) => {
+                  const selectedProduct = activeProducts.find((p) => p.id === line.productId);
+                  const available = line.productId
+                    ? getAvailableStock(
+                        line.productId,
+                        line.size,
+                        state.products,
+                        state.stockImports,
+                        state.orders
+                      )
+                    : 0;
+                  const qtyNum = Number(line.quantity) || 0;
+                  const unitPriceNum = Number(line.unitPrice) || 0;
+                  const lineTotal = qtyNum * unitPriceNum;
+                  const remainingAfterOrder = available - qtyNum;
+                  const productStockBreakdown = selectedProduct
+                    ? getProductActiveSizes(selectedProduct, state.stockImports, state.orders)
+                        .map(
+                          (s) =>
+                            `${s}:${getAvailableStock(
+                              selectedProduct.id,
+                              s,
+                              state.products,
+                              state.stockImports,
+                              state.orders
+                            )}`
                         )
-                      : 0;
-                    return (
-                      <div
-                        key={line.key}
-                        className="grid grid-cols-1 gap-3 rounded-lg border border-[#ECE7DD] bg-[#FAF8F4]/70 p-3 sm:grid-cols-12 sm:items-end"
-                      >
-                        <div className="sm:col-span-5">
+                        .join(' · ')
+                    : '';
+
+                  return (
+                    <div
+                      key={line.key}
+                      className="rounded-lg border border-[#ECE7DD] bg-[#FAF8F4]/70 p-3 space-y-2"
+                    >
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2.5fr)_minmax(0,1.1fr)_84px_125px_155px_36px] lg:items-end">
+                        <div className="sm:col-span-2 lg:col-span-1">
                           <label
                             htmlFor={`line-product-${line.key}`}
                             className="block text-xs font-medium text-[#57605E]"
                           >
-                            Mẫu sản phẩm #{index + 1}
+                            Ô chọn mẫu sản phẩm #{index + 1}
                           </label>
                           <select
                             id={`line-product-${line.key}`}
@@ -722,21 +863,38 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                             onChange={(e) => handleLineProductChange(line.key, e.target.value)}
                             className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
                           >
-                            <option value="">-- Chọn mẫu --</option>
-                            {brandProducts.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.code} — {p.name} ({formatVND(p.sellPrice)})
-                              </option>
-                            ))}
+                            <option value="">
+                              {activeProducts.length === 0
+                                ? '-- Chưa có mẫu trong kho --'
+                                : '-- Chọn mẫu sản phẩm --'}
+                            </option>
+                            {brandProducts.length > 0 && (
+                              <optgroup label={`Nhánh ${brand}`}>
+                                {brandProducts.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.code} — {p.name} ({formatVND(p.sellPrice)} · Tồn: {getProductTotalStock(p)})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {otherBrandProducts.length > 0 && (
+                              <optgroup label="Mẫu nhánh khác">
+                                {otherBrandProducts.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    [{p.brand}] {p.code} — {p.name} ({formatVND(p.sellPrice)} · Tồn: {getProductTotalStock(p)})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </select>
                         </div>
 
-                        <div className="sm:col-span-2">
+                        <div>
                           <label
                             htmlFor={`line-size-${line.key}`}
                             className="block text-xs font-medium text-[#57605E]"
                           >
-                            Size (Tồn: <span className="font-mono font-semibold">{available}</span>)
+                            Size (Tồn: <span className="font-mono font-semibold text-[#1A1F1E]">{available}</span>)
                           </label>
                           <select
                             id={`line-size-${line.key}`}
@@ -754,7 +912,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           </select>
                         </div>
 
-                        <div className="sm:col-span-2">
+                        <div>
                           <label
                             htmlFor={`line-qty-${line.key}`}
                             className="block text-xs font-medium text-[#57605E]"
@@ -773,18 +931,17 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           />
                         </div>
 
-                        <div className="sm:col-span-2">
+                        <div>
                           <label
                             htmlFor={`line-price-${line.key}`}
                             className="block text-xs font-medium text-[#57605E]"
                           >
-                            Đơn giá (đ)
+                            Giá bán niêm yết (đ)
                           </label>
                           <input
                             id={`line-price-${line.key}`}
                             type="number"
                             min={0}
-                            step={1000}
                             value={line.unitPrice}
                             onChange={(e) =>
                               handleLineChange(line.key, 'unitPrice', Number(e.target.value))
@@ -793,7 +950,19 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           />
                         </div>
 
-                        <div className="flex justify-end sm:col-span-1">
+                        <div>
+                          <span className="block text-xs font-medium text-[#57605E]">
+                            Thành tiền (SL × Giá)
+                          </span>
+                          <div
+                            data-testid={`line-subtotal-${index}`}
+                            className="mt-1 w-full rounded-lg border border-[#0D4F43]/25 bg-[#0D4F43]/5 px-3 py-2 text-right font-mono text-sm font-semibold text-[#0D4F43] tabular-nums"
+                          >
+                            {formatVND(lineTotal)}
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end">
                           <button
                             type="button"
                             onClick={() => handleRemoveLine(line.key)}
@@ -805,14 +974,37 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           </button>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+
+                      {selectedProduct && (
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E4DFD5]/70 pt-2 text-[11px]">
+                          <span className="text-[#57605E]">
+                            Tồn kho <strong className="text-[#1A1F1E]">{selectedProduct.code}</strong>:{' '}
+                            <span className="font-mono">{productStockBreakdown}</span>
+                            <span className="mx-1.5 text-[#C7C0B3]">|</span>
+                            Đơn giá: <span className="font-mono">{qtyNum} × {formatVND(unitPriceNum)} = <strong className="text-[#0D4F43]">{formatVND(lineTotal)}</strong></span>
+                          </span>
+                          {qtyNum > 0 && remainingAfterOrder >= 0 ? (
+                            <span className="font-medium text-[#0D4F43]">
+                              Tồn Size {line.size} sẽ tự điều chỉnh sau khi tạo đơn:{' '}
+                              <span className="font-mono font-semibold tabular-nums">
+                                {available} → {remainingAfterOrder}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="font-semibold text-[#A63429]">
+                              Tồn kho Size {line.size} chỉ còn {available} (không đủ cho SL {qtyNum})
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* Thanh toán & Cước vận chuyển */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            {/* Thanh toán, Giảm giá & Cước vận chuyển */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label htmlFor="order-shipping" className="block text-xs font-medium text-[#57605E]">
                   Phí ship khách trả (đ)
@@ -821,10 +1013,24 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   id="order-shipping"
                   type="number"
                   min={0}
-                  step={1000}
                   value={shippingFee}
                   onChange={(e) => setShippingFee(e.target.value)}
                   className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm text-[#1A1F1E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="order-discount" className="block text-xs font-medium text-[#57605E]">
+                  Giảm giá (đ) <span className="font-normal text-[#8A918E]">(Tuỳ chọn khi có KM)</span>
+                </label>
+                <input
+                  id="order-discount"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0 (Để trống nếu không KM)"
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm text-[#1A1F1E] placeholder:font-sans placeholder:text-xs placeholder:text-[#8A918E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
                 />
               </div>
 
@@ -836,7 +1042,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   id="order-shop-shipping-cost"
                   type="number"
                   min={0}
-                  step={1000}
                   value={shopShippingCost}
                   onChange={(e) => setShopShippingCost(e.target.value)}
                   className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm text-[#1A1F1E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
@@ -868,8 +1073,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                 <input
                   id="order-weight"
                   type="number"
-                  min={50}
-                  step={50}
+                  min={1}
                   value={weightGrams}
                   onChange={(e) => setWeightGrams(e.target.value)}
                   className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm text-[#1A1F1E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
@@ -891,7 +1095,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                 </select>
               </div>
 
-              <div>
+              <div className="sm:col-span-2">
                 <label htmlFor="order-note" className="block text-xs font-medium text-[#57605E]">
                   Ghi chú đơn hàng
                 </label>
@@ -907,16 +1111,34 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#ECE7DD] pt-4">
-              <div className="flex flex-wrap items-center gap-6 text-sm text-[#57605E]">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-[#57605E]">
+                <div>
+                  Tiền hàng:{' '}
+                  <span className="font-mono font-medium text-[#1A1F1E] tabular-nums">
+                    {formatVND(draftItemsSubtotal)}
+                  </span>
+                </div>
+                {effectiveDraftDiscount > 0 && (
+                  <div>
+                    Giảm giá:{' '}
+                    <span className="font-mono font-medium text-[#A63429] tabular-nums">
+                      -{formatVND(effectiveDraftDiscount)}
+                    </span>
+                  </div>
+                )}
                 <div>
                   Tổng giá trị đơn:{' '}
-                  <span className="font-mono text-lg font-semibold text-[#1A1F1E] tabular-nums">
+                  <span
+                    data-testid="draft-order-total"
+                    className="font-mono text-lg font-semibold text-[#1A1F1E] tabular-nums"
+                  >
                     {formatVND(draftTotal)}
                   </span>
                 </div>
                 <div>
                   Tiền thu hộ (COD):{' '}
                   <span
+                    data-testid="draft-order-cod"
                     className={`font-mono text-lg font-semibold tabular-nums ${
                       draftCOD > 0 ? 'text-[#B45309]' : 'text-[#0D4F43]'
                     }`}
@@ -936,8 +1158,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={brandProducts.length === 0}
-                  className="rounded-lg bg-[#0D4F43] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#093B32] disabled:opacity-50 whitespace-nowrap shrink-0"
+                  className="rounded-lg bg-[#0D4F43] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap shrink-0"
                 >
                   Lưu đơn hàng
                 </button>
@@ -1301,6 +1522,11 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           <div className="font-mono text-xs font-semibold text-[#1A1F1E] tabular-nums">
                             {formatVND(total)}
                           </div>
+                          {(order.discount || 0) > 0 && (
+                            <div className="mt-0.5 font-mono text-[11px] text-[#0D4F43] tabular-nums">
+                              Giảm: -{formatVND(order.discount || 0)}
+                            </div>
+                          )}
                           <div
                             className={`mt-0.5 font-mono text-[11px] tabular-nums ${
                               cod > 0 ? 'font-semibold text-[#B45309]' : 'text-[#57605E]'
@@ -1446,7 +1672,6 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                   id={`edit-cost-${order.id}`}
                                   type="number"
                                   min={0}
-                                  step={1000}
                                   value={editShopCost}
                                   onChange={(e) => setEditShopCost(e.target.value)}
                                   className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
@@ -1476,8 +1701,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                   </select>
                                   <input
                                     type="number"
-                                    min={50}
-                                    step={50}
+                                    min={1}
                                     aria-label={`Trọng lượng gram đơn ${order.code}`}
                                     value={editWeight}
                                     onChange={(e) => setEditWeight(e.target.value)}
@@ -1569,6 +1793,55 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
         onClose={() => setFullEditOrder(null)}
         onSave={onUpdateOrder}
       />
+
+      {onSaveProduct && (
+        <ProductModal
+          open={quickProductModalOpen}
+          editingProduct={null}
+          state={state}
+          actorName={currentUser.name}
+          onClose={() => setQuickProductModalOpen(false)}
+          onSave={(input) => {
+            const res = onSaveProduct(input);
+            if (res.ok && res.product) {
+              const created = res.product;
+              setBrand(created.brand);
+              setFormError(null);
+              const preferredSize: SizeOption =
+                created.brand === Brand.VAN_MIEN
+                  ? 'Freesize'
+                  : (['M', 'S', 'L'] as SizeOption[]).find(
+                      (s) => (created.initialStock[s] ?? 0) > 0
+                    ) ?? 'M';
+              setLines((prev) => {
+                const emptyIdx = prev.findIndex((l) => !l.productId);
+                if (emptyIdx !== -1) {
+                  return prev.map((l, i) =>
+                    i === emptyIdx
+                      ? {
+                          ...l,
+                          productId: created.id,
+                          size: preferredSize,
+                          unitPrice: created.sellPrice,
+                        }
+                      : l
+                  );
+                }
+                return [
+                  {
+                    key: `line_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    productId: created.id,
+                    size: preferredSize,
+                    quantity: 1,
+                    unitPrice: created.sellPrice,
+                  },
+                ];
+              });
+            }
+            return res;
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -111,7 +111,7 @@ service cloud.firestore {
         data.keys().hasOnly([
           'id', 'workspaceId', 'code', 'date', 'brand', 'customerName', 'customerPhone', 'shippingAddress',
           'shippingMethod', 'shopShippingCost', 'shippingCostPayer', 'shippingStatus',
-          'weightGrams', 'items', 'shippingFee', 'note', 'paymentStatus', 'isCancelled',
+          'weightGrams', 'items', 'shippingFee', 'discount', 'note', 'paymentStatus', 'isCancelled',
           'createdAt', 'createdBy', 'paymentConfirmedBy', 'paymentConfirmedAt',
           'cancelledBy', 'cancelledAt', 'serverCreatedAt', 'serverUpdatedAt'
         ]) &&
@@ -138,6 +138,7 @@ service cloud.firestore {
         data.items[0].quantity is number && data.items[0].quantity >= 1 &&
         data.items[0].unitPrice is number && data.items[0].unitPrice >= 0 &&
         data.shippingFee is number && data.shippingFee >= 0 && data.shippingFee <= 100000000 &&
+        (!('discount' in data) || (data.discount is number && data.discount >= 0 && data.discount <= 100000000)) &&
         data.note is string && data.note.size() <= 500 &&
         data.paymentStatus in ['Chưa thanh toán', 'Đã thanh toán'] &&
         data.isCancelled is bool &&

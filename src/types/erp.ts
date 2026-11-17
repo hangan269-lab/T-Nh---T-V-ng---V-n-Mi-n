@@ -144,6 +144,7 @@ export interface Order {
   weightGrams: number;
   items: OrderItem[];
   shippingFee: number;
+  discount?: number;
   note: string;
   paymentStatus: PaymentStatus;
   isCancelled: boolean;
