@@ -41,6 +41,7 @@ import {
 } from '../utils/finance';
 import { parseQuickOrderText } from '../utils/orderParser';
 import { ConfirmModal } from './ConfirmModal';
+import { OrderEditModal } from './OrderEditModal';
 
 type OrderFilter = 'all' | 'today' | 'unpaid' | 'paid' | 'vtp_not_sent';
 
@@ -51,11 +52,17 @@ interface OrdersTabProps {
   onOpenCreate: () => void;
   onCloseCreate: () => void;
   onCreateOrder: (draft: OrderDraftInput) => { ok: true } | { ok: false; error: string };
+  onUpdateOrder: (
+    orderId: string,
+    draft: OrderDraftInput
+  ) => { ok: true } | { ok: false; error: string };
+  onDeleteOrder: (orderId: string) => void;
   onConfirmPayment: (orderId: string) => void;
   onCancelOrder: (orderId: string) => void;
   onUpdateOrderShipping: (orderId: string, patch: OrderShippingUpdate) => void;
   onMarkOrdersShippingStatus: (orderIds: string[], status: ShippingStatus) => void;
   onExportOrdersCSV: () => void;
+  onExportOrdersXLSX: (ordersToExport: Order[]) => void;
   onExportViettelPostCSV: (ordersToExport: Order[]) => void;
 }
 
@@ -74,18 +81,24 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   onOpenCreate,
   onCloseCreate,
   onCreateOrder,
+  onUpdateOrder,
+  onDeleteOrder,
   onConfirmPayment,
   onCancelOrder,
   onUpdateOrderShipping,
   onMarkOrdersShippingStatus,
   onExportOrdersCSV,
+  onExportOrdersXLSX,
   onExportViettelPostCSV,
 }) => {
   const todayISO = getTodayISO();
   const [filter, setFilter] = useState<OrderFilter>('all');
+  const [monthFilter, setMonthFilter] = useState<string>('all');
   const [creatorFilter, setCreatorFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [cancelTarget, setCancelTarget] = useState<Order | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
+  const [fullEditOrder, setFullEditOrder] = useState<Order | null>(null);
 
   // Batch selection & VTP export confirmation
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -122,12 +135,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [quickParseNotice, setQuickParseNotice] = useState<string | null>(null);
 
   const brandProducts = useMemo(
-    () => state.products.filter((p) => p.brand === brand),
+    () => state.products.filter((p) => p.brand === brand && !p.isArchived),
     [state.products, brand]
   );
 
   const makeDefaultLine = (targetBrand: Brand): DraftLine => {
-    const prods = state.products.filter((p) => p.brand === targetBrand);
+    const prods = state.products.filter((p) => p.brand === targetBrand && !p.isArchived);
     const first = prods[0];
     const defaultSize: SizeOption = targetBrand === Brand.VAN_MIEN ? 'Freesize' : 'M';
     return {
@@ -148,7 +161,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
       return;
     }
 
-    const parsed = parseQuickOrderText(trimmed, state.products);
+    const activeProducts = state.products.filter((p) => !p.isArchived);
+    const parsed = parseQuickOrderText(trimmed, activeProducts);
     setFormError(null);
 
     if (parsed.customerName) {
@@ -164,8 +178,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     }
 
     const matchedProduct = parsed.productId
-      ? state.products.find((p) => p.id === parsed.productId)
-      : state.products.find((p) => p.brand === nextBrand);
+      ? activeProducts.find((p) => p.id === parsed.productId)
+      : activeProducts.find((p) => p.brand === nextBrand);
 
     const nextSize: SizeOption =
       parsed.size ?? (nextBrand === Brand.VAN_MIEN ? 'Freesize' : 'M');
@@ -324,6 +338,16 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     return Array.from(counts.entries()).map(([name, count]) => ({ name, count }));
   }, [state.accounts, state.orders]);
 
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    for (const o of state.orders) {
+      if (o.date && o.date.length >= 7) {
+        months.add(o.date.slice(0, 7));
+      }
+    }
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [state.orders]);
+
   const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return state.orders.filter((order) => {
@@ -340,6 +364,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
       )
         return false;
 
+      if (monthFilter !== 'all' && !order.date.startsWith(monthFilter)) {
+        return false;
+      }
+
       if (creatorFilter !== 'all' && (order.createdBy || 'Hệ thống') !== creatorFilter) {
         return false;
       }
@@ -354,7 +382,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
       }
       return true;
     });
-  }, [state.orders, filter, creatorFilter, searchQuery, todayISO]);
+  }, [state.orders, filter, monthFilter, creatorFilter, searchQuery, todayISO]);
 
   const selectableVisibleIds = useMemo(
     () => filteredOrders.filter((o) => !o.isCancelled).map((o) => o.id),
@@ -947,11 +975,20 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => onExportOrdersXLSX(filteredOrders)}
+              disabled={filteredOrders.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#166534] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#14532D] disabled:opacity-45 whitespace-nowrap shrink-0"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Xuất Excel Đơn hàng
+            </button>
+            <button
+              type="button"
               onClick={onExportOrdersCSV}
               className="inline-flex items-center gap-2 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
             >
               <Download className="h-3.5 w-3.5" />
-              Xuất CSV Đơn hàng
+              Xuất CSV
             </button>
             {!isCreateOpen && (
               <button
@@ -1016,16 +1053,35 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
               ))}
             </div>
 
-            <div className="relative w-full sm:w-72">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#57605E]" />
-              <input
-                type="search"
-                aria-label="Tìm theo tên, SĐT, địa chỉ, người tạo hoặc mã đơn"
-                placeholder="Tìm tên, SĐT, địa chỉ, mã đơn..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] py-2 pl-9 pr-3 text-sm text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-[#0D4F43] focus:bg-white focus:outline-none"
-              />
+            <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
+              <select
+                aria-label="Lọc đơn theo tháng"
+                value={monthFilter}
+                onChange={(e) => setMonthFilter(e.target.value)}
+                className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-xs font-medium text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
+              >
+                <option value="all">Tất cả các tháng</option>
+                {availableMonths.map((ym) => {
+                  const [y, m] = ym.split('-');
+                  return (
+                    <option key={ym} value={ym}>
+                      Tháng {m}/{y}
+                    </option>
+                  );
+                })}
+              </select>
+
+              <div className="relative flex-1 sm:w-72">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#57605E]" />
+                <input
+                  type="search"
+                  aria-label="Tìm theo tên, SĐT, địa chỉ, người tạo hoặc mã đơn"
+                  placeholder="Tìm tên, SĐT, địa chỉ, mã đơn..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] py-2 pl-9 pr-3 text-sm text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-[#0D4F43] focus:bg-white focus:outline-none"
+                />
+              </div>
             </div>
           </div>
 
@@ -1087,10 +1143,10 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[1140px] text-left text-sm">
+            <table className="w-full min-w-[940px] text-left text-xs">
               <thead>
                 <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
-                  <th className="py-3 pr-2 w-9">
+                  <th className="py-3 pr-1.5 w-7">
                     <input
                       type="checkbox"
                       checked={allVisibleSelected}
@@ -1099,14 +1155,14 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       className="h-4 w-4 rounded border-[#E4DFD5] accent-[#0D4F43]"
                     />
                   </th>
-                  <th className="py-3 pr-3">Mã / Ngày</th>
-                  <th className="py-3 px-3">Người tạo</th>
-                  <th className="py-3 px-3">Khách hàng &amp; Địa chỉ</th>
-                  <th className="py-3 px-3">Nhánh &amp; Sản phẩm</th>
-                  <th className="py-3 px-3">Vận chuyển &amp; Cước</th>
-                  <th className="py-3 px-3 text-right">Tổng thu / COD</th>
-                  <th className="py-3 px-3">Thanh toán</th>
-                  <th className="py-3 pl-3 text-right">Thao tác</th>
+                  <th className="py-3 pr-2">Mã / Ngày</th>
+                  <th className="py-3 px-2">Người tạo</th>
+                  <th className="py-3 px-2">Khách hàng &amp; Địa chỉ</th>
+                  <th className="py-3 px-2">Nhánh &amp; Sản phẩm</th>
+                  <th className="py-3 px-2">Vận chuyển &amp; Cước</th>
+                  <th className="py-3 px-2 text-right">Tổng thu / COD</th>
+                  <th className="py-3 px-2">Thanh toán</th>
+                  <th className="py-3 pl-2 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#ECE7DD]">
@@ -1124,7 +1180,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           order.isCancelled ? 'bg-[#FAF8F4]/60 opacity-60' : ''
                         }`}
                       >
-                        <td className="py-3.5 pr-2 align-top">
+                        <td className="py-3.5 pr-1.5 align-top">
                           <input
                             type="checkbox"
                             disabled={order.isCancelled}
@@ -1135,35 +1191,35 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           />
                         </td>
 
-                        <td className="py-3.5 pr-3 align-top whitespace-nowrap">
+                        <td className="py-3.5 pr-2 align-top whitespace-nowrap">
                           <div className="font-mono text-xs font-semibold text-[#1A1F1E]">
                             {order.code}
                           </div>
-                          <div className="mt-0.5 font-mono text-xs text-[#57605E] tabular-nums">
+                          <div className="mt-0.5 font-mono text-[11px] text-[#57605E] tabular-nums">
                             {formatDateVN(order.date)}
                           </div>
                         </td>
 
-                        <td className="py-3.5 px-3 align-top whitespace-nowrap">
+                        <td className="py-3.5 px-2 align-top whitespace-nowrap">
                           <div className="text-xs font-semibold text-[#1A1F1E]">
                             {order.createdBy || 'Hệ thống'}
                           </div>
-                          <div className="mt-0.5 text-[11px] text-[#57605E]">Người tạo đơn</div>
+                          <div className="mt-0.5 text-[11px] text-[#57605E]">Người tạo</div>
                         </td>
 
-                        <td className="py-3.5 px-3 align-top max-w-[230px]">
-                          <div className="font-medium text-[#1A1F1E]">{order.customerName}</div>
-                          <div className="mt-0.5 font-mono text-xs text-[#57605E]">
+                        <td className="py-3.5 px-2 align-top max-w-[165px] break-words">
+                          <div className="text-xs font-medium text-[#1A1F1E]">{order.customerName}</div>
+                          <div className="mt-0.5 font-mono text-[11px] text-[#57605E]">
                             {order.customerPhone}
                           </div>
                           {order.shippingAddress && (
-                            <div className="mt-1 text-xs leading-snug text-[#57605E]">
+                            <div className="mt-1 text-[11px] leading-snug text-[#57605E]">
                               {order.shippingAddress}
                             </div>
                           )}
                         </td>
 
-                        <td className="py-3.5 px-3 align-top">
+                        <td className="py-3.5 px-2 align-top max-w-[185px] break-words">
                           <div className="text-xs font-semibold text-[#0D4F43]">
                             {order.brand} · <span className="font-mono text-[#57605E]">{order.weightGrams || 500}g</span>
                           </div>
@@ -1177,13 +1233,13 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                             ))}
                           </ul>
                           {order.note && (
-                            <div className="mt-1 text-xs italic text-[#57605E]">
+                            <div className="mt-1 text-[11px] italic text-[#57605E]">
                               Ghi chú: {order.note}
                             </div>
                           )}
                         </td>
 
-                        <td className="py-3.5 px-3 align-top">
+                        <td className="py-3.5 px-2 align-top">
                           <div className="inline-flex items-center gap-1 text-xs font-medium text-[#1A1F1E] whitespace-nowrap">
                             <Truck className="h-3.5 w-3.5 text-[#57605E]" />
                             {order.shippingMethod}
@@ -1198,7 +1254,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                     shippingStatus: e.target.value as ShippingStatus,
                                   })
                                 }
-                                className={`rounded border px-2 py-0.5 text-xs font-medium focus:outline-none ${
+                                className={`rounded border px-1.5 py-0.5 text-[11px] font-medium focus:outline-none ${
                                   order.shippingStatus === ShippingStatus.DELIVERED
                                     ? 'border-[#0D4F43]/30 bg-[#0D4F43]/10 text-[#0D4F43]'
                                     : order.shippingStatus === ShippingStatus.VTP_CREATED
@@ -1213,12 +1269,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                 ))}
                               </select>
                             ) : (
-                              <span className="text-xs text-[#57605E]">{order.shippingStatus}</span>
+                              <span className="text-[11px] text-[#57605E]">{order.shippingStatus}</span>
                             )}
                           </div>
-                          <div className="mt-1.5 flex items-center gap-2 text-xs text-[#57605E] whitespace-nowrap">
-                            <span>
-                              Cước shop:{' '}
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[#57605E]">
+                            <span className="whitespace-nowrap">
+                              Cước:{' '}
                               <span className="font-mono font-medium text-[#1A1F1E] tabular-nums">
                                 {formatVND(order.shopShippingCost || 0)}
                               </span>
@@ -1232,7 +1288,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                                     : handleOpenShippingEdit(order)
                                 }
                                 aria-label={`Chỉnh sửa vận chuyển đơn ${order.code}`}
-                                className="inline-flex items-center gap-0.5 text-[11px] font-medium text-[#0D4F43] hover:underline"
+                                className="inline-flex items-center gap-0.5 text-[11px] font-medium text-[#0D4F43] hover:underline whitespace-nowrap"
                               >
                                 <Edit3 className="h-3 w-3" />
                                 Sửa VC
@@ -1241,12 +1297,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           </div>
                         </td>
 
-                        <td className="py-3.5 px-3 text-right align-top whitespace-nowrap">
-                          <div className="font-mono font-semibold text-[#1A1F1E] tabular-nums">
+                        <td className="py-3.5 px-2 text-right align-top whitespace-nowrap">
+                          <div className="font-mono text-xs font-semibold text-[#1A1F1E] tabular-nums">
                             {formatVND(total)}
                           </div>
                           <div
-                            className={`mt-0.5 font-mono text-xs tabular-nums ${
+                            className={`mt-0.5 font-mono text-[11px] tabular-nums ${
                               cod > 0 ? 'font-semibold text-[#B45309]' : 'text-[#57605E]'
                             }`}
                           >
@@ -1254,66 +1310,86 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                           </div>
                         </td>
 
-                        <td className="py-3.5 px-3 align-top">
+                        <td className="py-3.5 px-2 align-top max-w-[130px]">
                           {order.isCancelled ? (
                             <div>
-                              <span className="inline-flex items-center gap-1 rounded bg-[#F3EFE6] px-2 py-1 text-xs font-medium text-[#57605E] whitespace-nowrap">
-                                <XCircle className="h-3.5 w-3.5 shrink-0" />
+                              <span className="inline-flex items-center gap-1 rounded bg-[#F3EFE6] px-2 py-1 text-[11px] font-medium text-[#57605E] whitespace-nowrap">
+                                <XCircle className="h-3 w-3 shrink-0" />
                                 Đã hủy đơn
                               </span>
                               {order.cancelledBy && (
-                                <div className="mt-1 text-[11px] text-[#57605E]">
-                                  Đã hủy bởi <strong className="text-[#1A1F1E]">{order.cancelledBy}</strong>
-                                  {order.cancelledAt ? ` lúc ${formatAuditTimestamp(order.cancelledAt)}` : ''}
+                                <div className="mt-1 text-[10px] leading-snug text-[#57605E]">
+                                  Hủy bởi <strong className="text-[#1A1F1E]">{order.cancelledBy}</strong>
+                                  {order.cancelledAt ? ` · ${formatAuditTimestamp(order.cancelledAt)}` : ''}
                                 </div>
                               )}
                             </div>
                           ) : isPaid ? (
                             <div>
-                              <span className="inline-flex items-center gap-1 rounded bg-[#0D4F43]/10 px-2 py-1 text-xs font-medium text-[#0D4F43] whitespace-nowrap">
-                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                              <span className="inline-flex items-center gap-1 rounded bg-[#0D4F43]/10 px-2 py-1 text-[11px] font-medium text-[#0D4F43] whitespace-nowrap">
+                                <CheckCircle2 className="h-3 w-3 shrink-0" />
                                 Đã thanh toán
                               </span>
                               {order.paymentConfirmedBy && (
-                                <div className="mt-1 text-[11px] text-[#57605E]">
-                                  Đã xác nhận thanh toán bởi{' '}
+                                <div className="mt-1 text-[10px] leading-snug text-[#57605E]">
+                                  Xác nhận bởi{' '}
                                   <strong className="text-[#1A1F1E]">{order.paymentConfirmedBy}</strong>
                                   {order.paymentConfirmedAt
-                                    ? ` lúc ${formatAuditTimestamp(order.paymentConfirmedAt)}`
+                                    ? ` · ${formatAuditTimestamp(order.paymentConfirmedAt)}`
                                     : ''}
                                 </div>
                               )}
                             </div>
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded bg-[#FEF3C7] px-2 py-1 text-xs font-medium text-[#92400E] whitespace-nowrap">
-                              <Clock className="h-3.5 w-3.5 shrink-0" />
+                            <span className="inline-flex items-center gap-1 rounded bg-[#FEF3C7] px-2 py-1 text-[11px] font-medium text-[#92400E] whitespace-nowrap">
+                              <Clock className="h-3 w-3 shrink-0" />
                               Chưa thanh toán
                             </span>
                           )}
                         </td>
 
-                        <td className="py-3.5 pl-3 text-right align-top">
-                          {!order.isCancelled && (
-                            <div className="flex flex-col items-end gap-1.5">
-                              {!isPaid && (
-                                <button
-                                  type="button"
-                                  onClick={() => onConfirmPayment(order.id)}
-                                  className="rounded-md bg-[#0D4F43] px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap shrink-0"
-                                >
-                                  Xác nhận đã thanh toán
-                                </button>
-                              )}
+                        <td className="py-3.5 pl-2 text-right align-top">
+                          <div className="flex flex-col items-end gap-1.5">
+                            {!order.isCancelled && !isPaid && (
+                              <button
+                                type="button"
+                                onClick={() => onConfirmPayment(order.id)}
+                                className="rounded-md bg-[#0D4F43] px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap shrink-0"
+                              >
+                                Xác nhận đã thanh toán
+                              </button>
+                            )}
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setFullEditOrder(order)}
+                                aria-label={`Sửa đơn ${order.code}`}
+                                className="inline-flex items-center gap-1 rounded-md border border-[#E4DFD5] bg-white px-2 py-1 text-[11px] font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                Sửa đơn
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(order)}
+                                aria-label={`Xóa đơn ${order.code}`}
+                                className="inline-flex items-center gap-1 rounded-md border border-[#E4DFD5] bg-white px-2 py-1 text-[11px] font-medium text-[#A63429] transition-colors hover:border-[#A63429]/40 hover:bg-[#A63429]/5 whitespace-nowrap shrink-0"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                Xóa đơn
+                              </button>
+                            </div>
+                            {!order.isCancelled && (
                               <button
                                 type="button"
                                 onClick={() => setCancelTarget(order)}
                                 aria-label={`Hủy đơn ${order.code}`}
-                                className="rounded-md border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#A63429] transition-colors hover:border-[#A63429]/40 hover:bg-[#A63429]/5 whitespace-nowrap shrink-0"
+                                className="text-[11px] font-medium text-[#57605E] underline-offset-2 hover:text-[#A63429] hover:underline whitespace-nowrap shrink-0"
                               >
-                                Hủy đơn
+                                Hủy đơn (giữ lịch sử)
                               </button>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </td>
                       </tr>
 
@@ -1454,6 +1530,21 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
       />
 
       <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title={`Xác nhận xóa đơn hàng #${deleteTarget?.code ?? ''}?`}
+        description={`Bạn có chắc muốn xóa đơn hàng #${deleteTarget?.code ?? ''} của khách ${deleteTarget?.customerName ?? ''} không? Dữ liệu doanh thu và tồn kho sẽ được tự động hoàn lại.`}
+        confirmLabel="Xóa đơn hàng"
+        onConfirm={() => {
+          if (deleteTarget) {
+            onDeleteOrder(deleteTarget.id);
+            setSelectedIds((prev) => prev.filter((id) => id !== deleteTarget.id));
+            setDeleteTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
         open={Boolean(vtpPromptOrderIds && vtpPromptOrderIds.length > 0)}
         title="Đánh dấu trạng thái 'Đã lên đơn VTP'?"
         description={`Bạn có muốn đánh dấu ${vtpPromptOrderIds?.length ?? 0} đơn vừa xuất sang trạng thái "Đã lên đơn VTP" không để tránh xuất trùng ở lần sau?`}
@@ -1468,6 +1559,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
           }
         }}
         onCancel={() => setVtpPromptOrderIds(null)}
+      />
+
+      <OrderEditModal
+        open={Boolean(fullEditOrder)}
+        order={fullEditOrder}
+        state={state}
+        actorName={currentUser.name}
+        onClose={() => setFullEditOrder(null)}
+        onSave={onUpdateOrder}
       />
     </div>
   );

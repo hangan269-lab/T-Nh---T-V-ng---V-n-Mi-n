@@ -1,5 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Edit3, PackagePlus, Plus, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Edit3,
+  PackagePlus,
+  Plus,
+  RotateCcw,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   ALL_BRANDS,
   ALL_SIZES,
@@ -10,52 +18,84 @@ import {
   StockImport,
   UserAccount,
 } from '../types/erp';
-import { computeInventoryRows, formatDateVN, formatVND, getTodayISO } from '../utils/finance';
+import {
+  computeInventoryRows,
+  formatDateVN,
+  formatVND,
+  getAvailableStock,
+  getProductActiveSizes,
+  getTodayISO,
+  SaveProductInput,
+} from '../utils/finance';
+import { ConfirmModal } from './ConfirmModal';
+import { DeleteProductModal } from './DeleteProductModal';
+import { ProductModal } from './ProductModal';
 
 interface InventoryTabProps {
   state: AppState;
   currentUser: UserAccount;
-  onSaveProduct: (product: Omit<Product, 'id'> & { id?: string }) => void;
+  onSaveProduct: (
+    product: SaveProductInput
+  ) => { ok: true; hasStockAdjustment?: boolean } | { ok: false; error: string };
+  onArchiveProduct: (productId: string, archive: boolean) => void;
+  onDeleteProduct: (productId: string) => void;
   onAddStockImport: (
     imp: Omit<StockImport, 'id' | 'enteredBy'>,
     alsoRecordCashExpense: boolean
   ) => void;
+  onUpdateStockImport: (
+    importId: string,
+    patch: Omit<StockImport, 'id' | 'enteredBy'>
+  ) => { ok: true } | { ok: false; error: string };
+  onDeleteStockImport: (importId: string) => void;
 }
 
 export const InventoryTab: React.FC<InventoryTabProps> = ({
   state,
   currentUser,
   onSaveProduct,
+  onArchiveProduct,
+  onDeleteProduct,
   onAddStockImport,
+  onUpdateStockImport,
+  onDeleteStockImport,
 }) => {
+  const isAdmin = currentUser.role === 'Admin';
   const [brandFilter, setBrandFilter] = useState<'all' | Brand>('all');
-  const [showProductForm, setShowProductForm] = useState(false);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+
+  // Product modal & Safe delete modal
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+
+  // Stock import inline panel
   const [showImportForm, setShowImportForm] = useState(false);
+  const activeProducts = useMemo(
+    () => state.products.filter((p) => !p.isArchived),
+    [state.products]
+  );
 
-  // Product form state
-  const [pCode, setPCode] = useState('');
-  const [pName, setPName] = useState('');
-  const [pBrand, setPBrand] = useState<Brand>(Brand.TO_NHA);
-  const [pCostPrice, setPCostPrice] = useState('');
-  const [pSellPrice, setPSellPrice] = useState('');
-  const [pInitS, setPInitS] = useState('0');
-  const [pInitM, setPInitM] = useState('0');
-  const [pInitL, setPInitL] = useState('0');
-  const [pInitFreesize, setPInitFreesize] = useState('0');
-  const [productError, setProductError] = useState<string | null>(null);
-
-  // Stock import form state
   const [impDate, setImpDate] = useState(getTodayISO());
-  const [impProductId, setImpProductId] = useState(state.products[0]?.id ?? '');
+  const [impProductId, setImpProductId] = useState(activeProducts[0]?.id ?? '');
   const [impSize, setImpSize] = useState<SizeOption>('M');
   const [impQty, setImpQty] = useState('1');
   const [impUnitCost, setImpUnitCost] = useState(
-    state.products[0] ? String(state.products[0].costPrice) : '0'
+    activeProducts[0] ? String(activeProducts[0].costPrice) : '0'
   );
   const [impNote, setImpNote] = useState('');
   const [alsoRecordExpense, setAlsoRecordExpense] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+
+  // Stock import inline edit & delete confirmation
+  const [editingImpId, setEditingImpId] = useState<string | null>(null);
+  const [editImpDate, setEditImpDate] = useState('');
+  const [editImpProductId, setEditImpProductId] = useState('');
+  const [editImpSize, setEditImpSize] = useState<SizeOption>('M');
+  const [editImpQty, setEditImpQty] = useState('1');
+  const [editImpCost, setEditImpCost] = useState('0');
+  const [editImpNote, setEditImpNote] = useState('');
+  const [editImpError, setEditImpError] = useState<string | null>(null);
+  const [deleteImportTarget, setDeleteImportTarget] = useState<StockImport | null>(null);
 
   const inventoryRows = useMemo(() => {
     const rows = computeInventoryRows(state.products, state.stockImports, state.orders);
@@ -68,42 +108,22 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
     return state.products.filter((p) => p.brand === brandFilter);
   }, [state.products, brandFilter]);
 
-  const lowStockCount = inventoryRows.filter((r) => r.isLowStock).length;
+  const lowStockCount = inventoryRows.filter((r) => !r.isArchived && r.isLowStock).length;
 
-  const openNewProductForm = () => {
-    setEditingProductId(null);
-    setPCode('');
-    setPName('');
-    setPBrand(Brand.TO_NHA);
-    setPCostPrice('');
-    setPSellPrice('');
-    setPInitS('1');
-    setPInitM('2');
-    setPInitL('1');
-    setPInitFreesize('0');
-    setProductError(null);
-    setShowProductForm(true);
+  const openNewProductModal = () => {
+    setEditingProduct(null);
+    setProductModalOpen(true);
     setShowImportForm(false);
   };
 
-  const openEditProductForm = (p: Product) => {
-    setEditingProductId(p.id);
-    setPCode(p.code);
-    setPName(p.name);
-    setPBrand(p.brand);
-    setPCostPrice(String(p.costPrice));
-    setPSellPrice(String(p.sellPrice));
-    setPInitS(String(p.initialStock.S ?? 0));
-    setPInitM(String(p.initialStock.M ?? 0));
-    setPInitL(String(p.initialStock.L ?? 0));
-    setPInitFreesize(String(p.initialStock.Freesize ?? 0));
-    setProductError(null);
-    setShowProductForm(true);
+  const openEditProductModal = (p: Product) => {
+    setEditingProduct(p);
+    setProductModalOpen(true);
     setShowImportForm(false);
   };
 
   const openImportModal = (preselectProduct?: Product, preselectSize?: SizeOption) => {
-    const target = preselectProduct ?? state.products[0];
+    const target = preselectProduct ?? activeProducts[0];
     setImpDate(getTodayISO());
     setImpProductId(target?.id ?? '');
     setImpSize(
@@ -114,48 +134,6 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
     setImpNote('');
     setImportError(null);
     setShowImportForm(true);
-    setShowProductForm(false);
-  };
-
-  const handleSaveProductSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = pCode.trim();
-    const name = pName.trim();
-    const cost = Number(pCostPrice);
-    const sell = Number(pSellPrice);
-
-    if (!code || !name) {
-      setProductError('Vui lòng nhập đầy đủ Mã mẫu và Tên mẫu.');
-      return;
-    }
-    if (!Number.isFinite(cost) || cost < 0 || !Number.isFinite(sell) || sell < 0) {
-      setProductError('Giá nhập và Giá bán không hợp lệ.');
-      return;
-    }
-
-    const initialStock: Partial<Record<SizeOption, number>> = {};
-    if (pBrand === Brand.VAN_MIEN) {
-      initialStock.Freesize = Math.max(0, Number(pInitFreesize) || 0);
-      if ((Number(pInitS) || 0) > 0) initialStock.S = Number(pInitS);
-      if ((Number(pInitM) || 0) > 0) initialStock.M = Number(pInitM);
-      if ((Number(pInitL) || 0) > 0) initialStock.L = Number(pInitL);
-    } else {
-      initialStock.S = Math.max(0, Number(pInitS) || 0);
-      initialStock.M = Math.max(0, Number(pInitM) || 0);
-      initialStock.L = Math.max(0, Number(pInitL) || 0);
-      if ((Number(pInitFreesize) || 0) > 0) initialStock.Freesize = Number(pInitFreesize);
-    }
-
-    onSaveProduct({
-      id: editingProductId ?? undefined,
-      code,
-      name,
-      brand: pBrand,
-      costPrice: cost,
-      sellPrice: sell,
-      initialStock,
-    });
-    setShowProductForm(false);
   };
 
   const handleImportSubmit = (e: React.FormEvent) => {
@@ -189,6 +167,34 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
     setShowImportForm(false);
   };
 
+  const openEditStockImport = (imp: StockImport) => {
+    setEditingImpId(imp.id);
+    setEditImpDate(imp.date);
+    setEditImpProductId(imp.productId);
+    setEditImpSize(imp.size);
+    setEditImpQty(String(imp.quantity));
+    setEditImpCost(String(imp.unitCost));
+    setEditImpNote(imp.note || '');
+    setEditImpError(null);
+  };
+
+  const saveEditStockImport = (importId: string) => {
+    setEditImpError(null);
+    const res = onUpdateStockImport(importId, {
+      date: editImpDate,
+      productId: editImpProductId,
+      size: editImpSize,
+      quantity: Number(editImpQty),
+      unitCost: Number(editImpCost),
+      note: editImpNote.trim(),
+    });
+    if (!res.ok) {
+      setEditImpError(res.error);
+      return;
+    }
+    setEditingImpId(null);
+  };
+
   return (
     <div className="space-y-6">
       {/* Toolbar lọc nhánh & thao tác */}
@@ -200,11 +206,12 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
         >
           <button
             type="button"
+            aria-pressed={brandFilter === 'all'}
             onClick={() => setBrandFilter('all')}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`rounded-md px-3 py-1.5 text-xs whitespace-nowrap shrink-0 ${
               brandFilter === 'all'
-                ? 'bg-white text-[#1A1F1E] shadow-xs'
-                : 'text-[#57605E] hover:text-[#1A1F1E]'
+                ? 'bg-white font-semibold text-[#0D4F43] shadow-xs border border-[#E4DFD5]'
+                : 'font-medium text-[#57605E] hover:text-[#1A1F1E] border border-transparent'
             }`}
           >
             Tất cả nhánh
@@ -213,11 +220,12 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
             <button
               key={b}
               type="button"
+              aria-pressed={brandFilter === b}
               onClick={() => setBrandFilter(b)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+              className={`rounded-md px-3 py-1.5 text-xs whitespace-nowrap shrink-0 ${
                 brandFilter === b
-                  ? 'bg-white text-[#1A1F1E] shadow-xs'
-                  : 'text-[#57605E] hover:text-[#1A1F1E]'
+                  ? 'bg-white font-semibold text-[#0D4F43] shadow-xs border border-[#E4DFD5]'
+                  : 'font-medium text-[#57605E] hover:text-[#1A1F1E] border border-transparent'
               }`}
             >
               {b}
@@ -228,217 +236,23 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={openNewProductForm}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
+            onClick={() => openImportModal()}
+            disabled={activeProducts.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] disabled:opacity-50 whitespace-nowrap shrink-0"
           >
-            <Plus className="h-3.5 w-3.5" />
-            Thêm mẫu mới
+            <PackagePlus className="h-4 w-4 text-[#0D4F43]" />
+            Nhập kho mới
           </button>
           <button
             type="button"
-            onClick={() => openImportModal()}
-            disabled={state.products.length === 0}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#093B32] disabled:opacity-50 whitespace-nowrap shrink-0"
+            onClick={openNewProductModal}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#0D4F43] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#093B32] whitespace-nowrap shrink-0"
           >
-            <PackagePlus className="h-4 w-4" />
-            Nhập kho mới
+            <Plus className="h-4 w-4" />
+            <span>Thêm mẫu mới</span>
           </button>
         </div>
       </div>
-
-      {/* Form Thêm / Sửa mẫu */}
-      {showProductForm && (
-        <section
-          aria-labelledby="product-form-heading"
-          className="rounded-xl border border-[#0D4F43]/30 bg-white p-6"
-        >
-          <div className="flex items-center justify-between gap-4 border-b border-[#ECE7DD] pb-4">
-            <div>
-              <h2 id="product-form-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
-                {editingProductId ? 'Chỉnh sửa mẫu sản phẩm' : 'Thêm mẫu sản phẩm mới'}
-              </h2>
-              <p className="mt-0.5 text-xs text-[#57605E]">
-                Người thao tác: <strong className="text-[#0D4F43]">{currentUser.name}</strong> · Mọi thay đổi giá hoặc tồn kho đều được lưu vết vào Lịch sử thao tác.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowProductForm(false)}
-              aria-label="Đóng biểu mẫu sản phẩm"
-              className="rounded-lg p-1.5 text-[#57605E] hover:bg-[#F3EFE6]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <form onSubmit={handleSaveProductSubmit} className="mt-5 space-y-4">
-            {productError && (
-              <div role="alert" className="rounded-lg bg-[#A63429]/10 px-4 py-2.5 text-sm text-[#A63429]">
-                {productError}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <div>
-                <label htmlFor="prd-code" className="block text-xs font-medium text-[#57605E]">
-                  Mã mẫu
-                </label>
-                <input
-                  id="prd-code"
-                  type="text"
-                  placeholder="Ví dụ: TN-03"
-                  value={pCode}
-                  onChange={(e) => setPCode(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 font-mono text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div className="lg:col-span-2">
-                <label htmlFor="prd-name" className="block text-xs font-medium text-[#57605E]">
-                  Tên mẫu sản phẩm
-                </label>
-                <input
-                  id="prd-name"
-                  type="text"
-                  placeholder="Áo dài Lụa Tơ Tằm"
-                  value={pName}
-                  onChange={(e) => setPName(e.target.value)}
-                  className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label htmlFor="prd-brand" className="block text-xs font-medium text-[#57605E]">
-                  Nhánh thương hiệu
-                </label>
-                <select
-                  id="prd-brand"
-                  value={pBrand}
-                  onChange={(e) => setPBrand(e.target.value as Brand)}
-                  className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
-                >
-                  {ALL_BRANDS.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="prd-cost" className="block text-xs font-medium text-[#57605E]">
-                    Giá nhập (đ)
-                  </label>
-                  <input
-                    id="prd-cost"
-                    type="number"
-                    min={0}
-                    step={1000}
-                    value={pCostPrice}
-                    onChange={(e) => setPCostPrice(e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-2 font-mono text-sm text-[#1A1F1E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                    required
-                  />
-                </div>
-                <div>
-                  <label htmlFor="prd-sell" className="block text-xs font-medium text-[#57605E]">
-                    Giá bán (đ)
-                  </label>
-                  <input
-                    id="prd-sell"
-                    type="number"
-                    min={0}
-                    step={1000}
-                    value={pSellPrice}
-                    onChange={(e) => setPSellPrice(e.target.value)}
-                    className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-2 font-mono text-sm text-[#1A1F1E] tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                    required
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-[#ECE7DD] pt-4">
-              <div className="text-xs font-medium text-[#57605E]">
-                Tồn đầu kỳ theo Size (để 0 nếu chưa có sẵn)
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div>
-                  <label htmlFor="init-s" className="block text-xs text-[#57605E]">
-                    Size S
-                  </label>
-                  <input
-                    id="init-s"
-                    type="number"
-                    min={0}
-                    value={pInitS}
-                    onChange={(e) => setPInitS(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] px-3 py-1.5 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="init-m" className="block text-xs text-[#57605E]">
-                    Size M
-                  </label>
-                  <input
-                    id="init-m"
-                    type="number"
-                    min={0}
-                    value={pInitM}
-                    onChange={(e) => setPInitM(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] px-3 py-1.5 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="init-l" className="block text-xs text-[#57605E]">
-                    Size L
-                  </label>
-                  <input
-                    id="init-l"
-                    type="number"
-                    min={0}
-                    value={pInitL}
-                    onChange={(e) => setPInitL(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] px-3 py-1.5 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="init-fs" className="block text-xs text-[#57605E]">
-                    Freesize
-                  </label>
-                  <input
-                    id="init-fs"
-                    type="number"
-                    min={0}
-                    value={pInitFreesize}
-                    onChange={(e) => setPInitFreesize(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] px-3 py-1.5 font-mono text-sm tabular-nums focus:border-[#0D4F43] focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowProductForm(false)}
-                className="rounded-lg border border-[#E4DFD5] bg-white px-4 py-2 text-sm font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
-              >
-                Hủy
-              </button>
-              <button
-                type="submit"
-                className="rounded-lg bg-[#0D4F43] px-5 py-2 text-sm font-medium text-white hover:bg-[#093B32]"
-              >
-                {editingProductId ? 'Cập nhật mẫu' : 'Lưu mẫu mới'}
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
 
       {/* Form Nhập kho mới */}
       {showImportForm && (
@@ -497,7 +311,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                   onChange={(e) => {
                     const id = e.target.value;
                     setImpProductId(id);
-                    const p = state.products.find((item) => item.id === id);
+                    const p = activeProducts.find((item) => item.id === id);
                     if (p) {
                       setImpUnitCost(String(p.costPrice));
                       if (p.brand === Brand.VAN_MIEN) setImpSize('Freesize');
@@ -505,7 +319,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                   }}
                   className="mt-1.5 w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm text-[#1A1F1E] focus:border-[#0D4F43] focus:outline-none"
                 >
-                  {state.products.map((p) => (
+                  {activeProducts.map((p) => (
                     <option key={p.id} value={p.id}>
                       [{p.brand}] {p.code} — {p.name}
                     </option>
@@ -617,7 +431,139 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
         </section>
       )}
 
-      {/* Bảng 1: Theo dõi Nhập - Xuất - Tồn chi tiết theo Size */}
+      {/* Bảng 1: Danh mục mẫu & Quản lý vòng đời sản phẩm */}
+      <section aria-labelledby="catalog-heading" className="rounded-xl border border-[#E4DFD5] bg-white p-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-4 border-b border-[#ECE7DD] pb-4">
+          <div>
+            <h2 id="catalog-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
+              Danh mục mẫu sản phẩm ({filteredProducts.length})
+            </h2>
+            <p className="mt-0.5 text-xs text-[#57605E]">
+              Quản lý mã mẫu, giá nhập/bán, điều chỉnh tồn kho thực tế và trạng thái kinh doanh từng mẫu.
+            </p>
+          </div>
+        </div>
+
+        {filteredProducts.length === 0 ? (
+          <div className="mt-6 rounded-lg bg-[#FAF8F4] px-6 py-8 text-center text-sm text-[#57605E]">
+            Chưa có mẫu sản phẩm nào. Nhấn "+ Thêm mẫu mới" ở trên để khởi tạo danh mục.
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[880px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
+                  <th className="py-3 pr-3">Mã mẫu</th>
+                  <th className="py-3 px-3">Tên mẫu</th>
+                  <th className="py-3 px-3">Nhánh</th>
+                  <th className="py-3 px-3">Tồn hiện tại theo Size</th>
+                  <th className="py-3 px-3 text-right">Giá nhập</th>
+                  <th className="py-3 px-3 text-right">Giá bán niêm yết</th>
+                  <th className="py-3 pl-3 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#ECE7DD]">
+                {filteredProducts.map((p) => {
+                  const sizes = getProductActiveSizes(p, state.stockImports, state.orders);
+                  const stockSummary = sizes
+                    .map(
+                      (s) =>
+                        `${s === 'Freesize' ? 'Freesize' : s}:${getAvailableStock(
+                          p.id,
+                          s,
+                          state.products,
+                          state.stockImports,
+                          state.orders
+                        )}`
+                    )
+                    .join(' · ');
+
+                  return (
+                    <tr
+                      key={p.id}
+                      className={`hover:bg-[#FAF8F4] ${p.isArchived ? 'opacity-65 bg-[#FAF8F4]/50' : ''}`}
+                    >
+                      <td className="py-3 pr-3 font-mono text-xs font-semibold text-[#1A1F1E] whitespace-nowrap">
+                        {p.code}
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="font-medium text-[#1A1F1E]">
+                          {p.name}
+                          {p.isArchived && (
+                            <span className="ml-2 text-xs font-medium text-[#B45309]">
+                              · Ngừng kinh doanh
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-xs text-[#57605E] whitespace-nowrap">
+                        {p.brand}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-xs text-[#57605E] tabular-nums whitespace-nowrap">
+                        {stockSummary}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono text-[#57605E] tabular-nums whitespace-nowrap">
+                        {formatVND(p.costPrice)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums whitespace-nowrap">
+                        {formatVND(p.sellPrice)}
+                      </td>
+                      <td className="py-3 pl-3 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openEditProductModal(p)}
+                            aria-label={`Sửa mẫu ${p.code}`}
+                            className="inline-flex items-center gap-1 rounded-md border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            Sửa mẫu
+                          </button>
+
+                          {!p.isArchived ? (
+                            <button
+                              type="button"
+                              onClick={() => openImportModal(p)}
+                              className="rounded-md bg-[#0D4F43]/10 px-2.5 py-1 text-xs font-medium text-[#0D4F43] hover:bg-[#0D4F43]/20 whitespace-nowrap shrink-0"
+                            >
+                              Nhập thêm
+                            </button>
+                          ) : (
+                            isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => onArchiveProduct(p.id, false)}
+                                className="inline-flex items-center gap-1 rounded-md border border-[#0D4F43]/30 bg-white px-2.5 py-1 text-xs font-medium text-[#0D4F43] hover:bg-[#0D4F43]/5 whitespace-nowrap shrink-0"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Mở bán lại
+                              </button>
+                            )
+                          )}
+
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(p)}
+                              aria-label={`Xóa mẫu ${p.code}`}
+                              className="inline-flex items-center gap-1 rounded-md border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#A63429] hover:border-[#A63429]/40 hover:bg-[#A63429]/5 whitespace-nowrap shrink-0"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Xóa mẫu
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Bảng 2: Theo dõi Nhập - Xuất - Tồn chi tiết theo Size */}
       <section aria-labelledby="inventory-ledger-heading" className="rounded-xl border border-[#E4DFD5] bg-white p-6">
         <div className="flex flex-wrap items-baseline justify-between gap-4 border-b border-[#ECE7DD] pb-4">
           <div>
@@ -625,7 +571,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
               Bảng theo dõi Tồn kho theo Size (Nhập - Xuất - Tồn)
             </h2>
             <p className="mt-0.5 text-xs text-[#57605E]">
-              Tự động tổng hợp từ Tồn đầu kỳ, Phiếu nhập kho và Đơn bán hàng ·{' '}
+              Tự động tổng hợp từ Tồn đầu kỳ, Phiếu nhập kho, Đơn bán hàng và Điều chỉnh kiểm kê ·{' '}
               <span className={lowStockCount > 0 ? 'font-semibold text-[#A63429]' : ''}>
                 {lowStockCount} phân loại sắp hết (&le; 1 sp)
               </span>
@@ -642,7 +588,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[780px] text-left text-sm">
+            <table className="w-full min-w-[840px] text-left text-sm">
               <thead>
                 <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
                   <th className="py-3 pr-3">Mã / Tên mẫu</th>
@@ -651,6 +597,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                   <th className="py-3 px-3 text-right">Tồn đầu kỳ</th>
                   <th className="py-3 px-3 text-right">Tổng nhập</th>
                   <th className="py-3 px-3 text-right">Tổng bán</th>
+                  <th className="py-3 px-3 text-right">Điều chỉnh</th>
                   <th className="py-3 px-3 text-right">Tồn hiện tại</th>
                   <th className="py-3 pl-3 text-right">Trạng thái</th>
                 </tr>
@@ -660,7 +607,11 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                   <tr
                     key={row.key}
                     className={`transition-colors hover:bg-[#FAF8F4] ${
-                      row.isLowStock ? 'bg-[#A63429]/[0.03]' : ''
+                      row.isArchived
+                        ? 'opacity-60'
+                        : row.isLowStock
+                          ? 'bg-[#A63429]/[0.03]'
+                          : ''
                     }`}
                   >
                     <td className="py-3 pr-3">
@@ -683,14 +634,31 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                       -{row.totalSold}
                     </td>
                     <td
+                      className={`py-3 px-3 text-right font-mono tabular-nums ${
+                        row.adjustment > 0
+                          ? 'text-[#0D4F43]'
+                          : row.adjustment < 0
+                            ? 'text-[#A63429]'
+                            : 'text-[#8A918E]'
+                      }`}
+                    >
+                      {row.adjustment > 0
+                        ? `+${row.adjustment}`
+                        : row.adjustment < 0
+                          ? row.adjustment
+                          : '0'}
+                    </td>
+                    <td
                       className={`py-3 px-3 text-right font-mono text-base font-semibold tabular-nums ${
-                        row.isLowStock ? 'text-[#A63429]' : 'text-[#1A1F1E]'
+                        row.isLowStock && !row.isArchived ? 'text-[#A63429]' : 'text-[#1A1F1E]'
                       }`}
                     >
                       {row.currentStock}
                     </td>
-                    <td className="py-3 pl-3 text-right">
-                      {row.isLowStock ? (
+                    <td className="py-3 pl-3 text-right whitespace-nowrap">
+                      {row.isArchived ? (
+                        <span className="text-xs font-medium text-[#B45309]">Ngừng bán</span>
+                      ) : row.isLowStock ? (
                         <span className="inline-flex items-center gap-1 rounded bg-[#A63429]/10 px-2 py-1 text-xs font-semibold text-[#A63429]">
                           <AlertTriangle className="h-3.5 w-3.5" />
                           {row.currentStock <= 0 ? 'Hết hàng' : 'Sắp hết'}
@@ -705,87 +673,15 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
             </table>
           </div>
         )}
-      </section>
-
-      {/* Bảng 2: Danh mục mẫu & Giá niêm yết */}
-      <section aria-labelledby="catalog-heading" className="rounded-xl border border-[#E4DFD5] bg-white p-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-4 border-b border-[#ECE7DD] pb-4">
-          <div>
-            <h2 id="catalog-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
-              Danh mục mẫu sản phẩm ({filteredProducts.length})
-            </h2>
-            <p className="mt-0.5 text-xs text-[#57605E]">
-              Quản lý mã mẫu, giá nhập vốn và giá bán niêm yết theo từng nhánh thương hiệu.
-            </p>
-          </div>
-        </div>
-
-        {filteredProducts.length === 0 ? (
-          <div className="mt-6 rounded-lg bg-[#FAF8F4] px-6 py-8 text-center text-sm text-[#57605E]">
-            Chưa có mẫu sản phẩm nào. Nhấn "Thêm mẫu mới" ở trên để khởi tạo danh mục.
-          </div>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-[#E4DFD5] text-xs font-semibold text-[#57605E]">
-                  <th className="py-3 pr-3">Mã mẫu</th>
-                  <th className="py-3 px-3">Tên mẫu</th>
-                  <th className="py-3 px-3">Nhánh</th>
-                  <th className="py-3 px-3 text-right">Giá nhập</th>
-                  <th className="py-3 px-3 text-right">Giá bán niêm yết</th>
-                  <th className="py-3 pl-3 text-right">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#ECE7DD]">
-                {filteredProducts.map((p) => (
-                  <tr key={p.id} className="hover:bg-[#FAF8F4]">
-                    <td className="py-3 pr-3 font-mono text-xs font-semibold text-[#1A1F1E]">
-                      {p.code}
-                    </td>
-                    <td className="py-3 px-3 font-medium text-[#1A1F1E]">{p.name}</td>
-                    <td className="py-3 px-3 text-xs text-[#57605E]">{p.brand}</td>
-                    <td className="py-3 px-3 text-right font-mono text-[#57605E] tabular-nums">
-                      {formatVND(p.costPrice)}
-                    </td>
-                    <td className="py-3 px-3 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums">
-                      {formatVND(p.sellPrice)}
-                    </td>
-                    <td className="py-3 pl-3 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openEditProductForm(p)}
-                          aria-label={`Sửa mẫu ${p.code}`}
-                          className="inline-flex items-center gap-1 rounded-md border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
-                        >
-                          <Edit3 className="h-3.5 w-3.5" />
-                          Sửa
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openImportModal(p)}
-                          className="rounded-md bg-[#0D4F43]/10 px-2.5 py-1 text-xs font-medium text-[#0D4F43] hover:bg-[#0D4F43]/20"
-                        >
-                          Nhập thêm
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
 
         {/* Lịch sử nhập kho gần đây */}
         {state.stockImports.length > 0 && (
           <div className="mt-8 border-t border-[#ECE7DD] pt-5">
             <h3 className="text-xs font-semibold text-[#57605E]">
-              Lịch sử phiếu nhập kho gần đây ({state.stockImports.length})
+              Lịch sử phiếu nhập kho ({state.stockImports.length})
             </h3>
             <div className="mt-3 overflow-x-auto">
-              <table className="w-full min-w-[680px] text-left text-xs">
+              <table className="w-full min-w-[780px] text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#ECE7DD] text-[#57605E]">
                     <th className="py-2 pr-3">Ngày nhập</th>
@@ -794,35 +690,201 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                     <th className="py-2 px-3 text-center">Size</th>
                     <th className="py-2 px-3 text-right">SL</th>
                     <th className="py-2 px-3 text-right">Đơn giá nhập</th>
-                    <th className="py-2 pl-3 text-right">Thành tiền</th>
+                    <th className="py-2 px-3 text-right">Thành tiền</th>
+                    <th className="py-2 pl-3 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#ECE7DD]">
-                  {state.stockImports.slice(0, 8).map((imp) => {
+                  {state.stockImports.map((imp) => {
                     const prd = state.products.find((p) => p.id === imp.productId);
+                    const isEditingImp = editingImpId === imp.id;
                     return (
-                      <tr key={imp.id}>
-                        <td className="py-2 pr-3 font-mono text-[#57605E]">
-                          {formatDateVN(imp.date)}
-                        </td>
-                        <td className="py-2 px-3 font-medium text-[#1A1F1E]">
-                          {imp.enteredBy || 'Hệ thống'}
-                        </td>
-                        <td className="py-2 px-3 text-[#1A1F1E]">
-                          {prd ? `${prd.code} — ${prd.name}` : imp.productId}
-                          {imp.note && <span className="ml-2 text-[#57605E]">({imp.note})</span>}
-                        </td>
-                        <td className="py-2 px-3 text-center font-mono">{imp.size}</td>
-                        <td className="py-2 px-3 text-right font-mono font-semibold text-[#0D4F43] tabular-nums">
-                          +{imp.quantity}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[#57605E] tabular-nums">
-                          {formatVND(imp.unitCost)}
-                        </td>
-                        <td className="py-2 pl-3 text-right font-mono font-medium text-[#1A1F1E] tabular-nums">
-                          {formatVND(imp.quantity * imp.unitCost)}
-                        </td>
-                      </tr>
+                      <React.Fragment key={imp.id}>
+                        <tr className="hover:bg-[#FAF8F4]">
+                          <td className="py-2.5 pr-3 font-mono text-[#57605E] whitespace-nowrap">
+                            {formatDateVN(imp.date)}
+                          </td>
+                          <td className="py-2.5 px-3 font-medium text-[#1A1F1E] whitespace-nowrap">
+                            {imp.enteredBy || 'Hệ thống'}
+                          </td>
+                          <td className="py-2.5 px-3 text-[#1A1F1E]">
+                            {prd ? `${prd.code} — ${prd.name}` : imp.productId}
+                            {imp.note && <span className="ml-2 text-[#57605E]">({imp.note})</span>}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono">{imp.size}</td>
+                          <td className="py-2.5 px-3 text-right font-mono font-semibold text-[#0D4F43] tabular-nums">
+                            +{imp.quantity}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-[#57605E] tabular-nums whitespace-nowrap">
+                            {formatVND(imp.unitCost)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-medium text-[#1A1F1E] tabular-nums whitespace-nowrap">
+                            {formatVND(imp.quantity * imp.unitCost)}
+                          </td>
+                          <td className="py-2.5 pl-3 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  isEditingImp ? setEditingImpId(null) : openEditStockImport(imp)
+                                }
+                                aria-label={`Sửa phiếu nhập ${prd?.code ?? imp.id}`}
+                                className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                Sửa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeleteImportTarget(imp)}
+                                aria-label={`Xóa phiếu nhập ${prd?.code ?? imp.id}`}
+                                className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#A63429] hover:border-[#A63429]/40 hover:bg-[#A63429]/5"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                Xóa
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {isEditingImp && (
+                          <tr className="bg-[#FAF8F4]">
+                            <td colSpan={8} className="px-4 py-3">
+                              {editImpError && (
+                                <div role="alert" className="mb-2 text-xs font-medium text-[#A63429]">
+                                  {editImpError}
+                                </div>
+                              )}
+                              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7 sm:items-end">
+                                <div>
+                                  <label
+                                    htmlFor={`edit-imp-date-${imp.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Ngày nhập
+                                  </label>
+                                  <input
+                                    id={`edit-imp-date-${imp.id}`}
+                                    type="date"
+                                    value={editImpDate}
+                                    onChange={(e) => setEditImpDate(e.target.value)}
+                                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  />
+                                </div>
+
+                                <div className="lg:col-span-2">
+                                  <label
+                                    htmlFor={`edit-imp-prd-${imp.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Mẫu sản phẩm
+                                  </label>
+                                  <select
+                                    id={`edit-imp-prd-${imp.id}`}
+                                    value={editImpProductId}
+                                    onChange={(e) => setEditImpProductId(e.target.value)}
+                                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  >
+                                    {state.products.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.code} — {p.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label
+                                    htmlFor={`edit-imp-size-${imp.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Size
+                                  </label>
+                                  <select
+                                    id={`edit-imp-size-${imp.id}`}
+                                    value={editImpSize}
+                                    onChange={(e) => setEditImpSize(e.target.value as SizeOption)}
+                                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  >
+                                    {ALL_SIZES.map((s) => (
+                                      <option key={s} value={s}>
+                                        {s}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label
+                                    htmlFor={`edit-imp-qty-${imp.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Số lượng
+                                  </label>
+                                  <input
+                                    id={`edit-imp-qty-${imp.id}`}
+                                    type="number"
+                                    min={1}
+                                    value={editImpQty}
+                                    onChange={(e) => setEditImpQty(e.target.value)}
+                                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label
+                                    htmlFor={`edit-imp-cost-${imp.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Đơn giá nhập (đ)
+                                  </label>
+                                  <input
+                                    id={`edit-imp-cost-${imp.id}`}
+                                    type="number"
+                                    min={0}
+                                    step={1000}
+                                    value={editImpCost}
+                                    onChange={(e) => setEditImpCost(e.target.value)}
+                                    className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                                  />
+                                </div>
+
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingImpId(null)}
+                                    className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#57605E] hover:bg-[#F3EFE6]"
+                                  >
+                                    Hủy
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveEditStockImport(imp.id)}
+                                    className="rounded-lg bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#093B32] whitespace-nowrap"
+                                  >
+                                    Lưu phiếu
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="mt-2">
+                                <label
+                                  htmlFor={`edit-imp-note-${imp.id}`}
+                                  className="block text-[11px] font-medium text-[#57605E]"
+                                >
+                                  Ghi chú nhập hàng
+                                </label>
+                                <input
+                                  id={`edit-imp-note-${imp.id}`}
+                                  type="text"
+                                  value={editImpNote}
+                                  onChange={(e) => setEditImpNote(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -831,6 +893,37 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
           </div>
         )}
       </section>
+
+      <ProductModal
+        open={productModalOpen}
+        editingProduct={editingProduct}
+        state={state}
+        actorName={currentUser.name}
+        onClose={() => setProductModalOpen(false)}
+        onSave={onSaveProduct}
+      />
+
+      <DeleteProductModal
+        product={deleteTarget}
+        orders={state.orders}
+        onClose={() => setDeleteTarget(null)}
+        onArchive={(id) => onArchiveProduct(id, true)}
+        onPermanentDelete={onDeleteProduct}
+      />
+
+      <ConfirmModal
+        open={Boolean(deleteImportTarget)}
+        title="Xác nhận xóa phiếu nhập kho?"
+        description="Khi xóa phiếu nhập kho này, tồn kho hiện tại, Tổng giá nhập P&L và khoản chi 'Nhập hàng' liên kết (nếu có) sẽ được tự động cập nhật lại."
+        confirmLabel="Xóa phiếu nhập"
+        onConfirm={() => {
+          if (deleteImportTarget) {
+            onDeleteStockImport(deleteImportTarget.id);
+            setDeleteImportTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteImportTarget(null)}
+      />
     </div>
   );
 };

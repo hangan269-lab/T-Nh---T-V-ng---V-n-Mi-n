@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ActorIdentity,
+  addBudgetItemWithAudit,
   addExpenseWithAudit,
   addStockImportWithAudit,
+  archiveProductWithAudit,
   authenticateUser,
   cancelOrder,
   changeUserPinWithAudit,
@@ -15,23 +17,37 @@ import {
   confirmOrderPayment,
   createOrderWithValidation,
   createUserAccountWithAudit,
+  deleteBudgetItemWithAudit,
   deleteExpenseWithAudit,
+  deleteOrderWithAudit,
+  deleteProductWithAudit,
   deleteShareholderWithAudit,
+  deleteStockImportWithAudit,
+  deleteUserAccountWithAudit,
   exportOrdersToCSV,
   exportStateToJSON,
   exportViettelPostCSV,
   formatVND,
   getAvailableStock,
   getOrderCOD,
+  getOrderTotal,
   getTodayISO,
+  hasProductOrderHistory,
   markOrdersShippingStatus,
   parseImportedJSON,
   saveProductWithAudit,
+  saveProductWithValidation,
+  suggestNextProductCode,
   toggleExpenseStatus,
+  updateBudgetItemWithAudit,
   updateExpenseWithAudit,
   updateOrderShipping,
+  updateOrderWithValidation,
   updateShareholderWithAudit,
+  updateStockImportWithValidation,
+  updateUserAccountWithAudit,
 } from './finance';
+import { buildFinanceWorkbook, buildOrdersWorkbook } from './excelExport';
 import { createSeedState } from '../data/seedData';
 import {
   Brand,
@@ -442,3 +458,332 @@ test('parseImportedJSON migrates legacy JSON backups without accounts or auditLo
   assert.deepEqual(res.state.auditLogs, []);
   assert.equal(res.state.orders[0].createdBy, 'Hệ thống');
 });
+
+test('product lifecycle: auto-code suggestion, add, edit price/stock with historical preservation, and safe archive/delete RBAC', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+  const giangActor: ActorIdentity = { id: 'acc_giang', name: 'Giang', role: 'Thành viên' };
+
+  // 1. Auto-suggest codes
+  assert.equal(suggestNextProductCode(Brand.TO_NHA, seed.products), 'TN-04');
+  assert.equal(suggestNextProductCode(Brand.TO_VUONG, seed.products), 'TV-03');
+  assert.equal(suggestNextProductCode(Brand.VAN_MIEN, seed.products), 'VM-03');
+
+  // 2. Add new product with S, M, L stock
+  const addRes = saveProductWithValidation(
+    seed,
+    {
+      code: 'TN-04',
+      name: 'Áo dài Lụa Sen Hồng',
+      brand: Brand.TO_NHA,
+      costPrice: 720000,
+      sellPrice: 1580000,
+      initialStock: { S: 2, M: 3, L: 1 },
+    },
+    giangActor
+  );
+  assert.equal(addRes.ok, true);
+  if (!addRes.ok) return;
+  assert.equal(addRes.product.code, 'TN-04');
+  assert.equal(
+    getAvailableStock(addRes.product.id, 'M', addRes.state.products, addRes.state.stockImports, addRes.state.orders),
+    3
+  );
+  assert.equal(addRes.state.auditLogs[0].action, 'Thêm mẫu mới');
+
+  // Duplicate code rejected
+  const dupRes = saveProductWithValidation(
+    addRes.state,
+    {
+      code: 'tn-04',
+      name: 'Trùng mã',
+      brand: Brand.TO_NHA,
+      costPrice: 500000,
+      sellPrice: 900000,
+      initialStock: { S: 1 },
+    },
+    giangActor
+  );
+  assert.equal(dupRes.ok, false);
+
+  // 3. Edit existing product (prd_tn_01) price & direct stock adjustment while preserving historical order ord_01
+  const oldOrderBefore = addRes.state.orders.find((o) => o.id === 'ord_01')!;
+  const oldOrderTotalBefore = getOrderTotal(oldOrderBefore);
+  assert.equal(oldOrderBefore.items[0].productName, 'Áo dài Lụa Ngọc Bích');
+  assert.equal(oldOrderBefore.items[0].unitPrice, 1450000);
+
+  const stockBeforeM = getAvailableStock(
+    'prd_tn_01',
+    'M',
+    addRes.state.products,
+    addRes.state.stockImports,
+    addRes.state.orders
+  );
+  assert.equal(stockBeforeM, 4);
+
+  const editRes = saveProductWithValidation(
+    addRes.state,
+    {
+      id: 'prd_tn_01',
+      code: 'TN-01',
+      name: 'Áo dài Lụa Ngọc Bích (Bản mới)',
+      brand: Brand.TO_NHA,
+      costPrice: 680000,
+      sellPrice: 1690000,
+      initialStock: { S: 2, M: 3, L: 2 },
+      targetCurrentStock: { S: 2, M: 2, L: 2 },
+      adjustmentReason: 'Kiểm kê thiếu 2 chiếc size M',
+    },
+    nganActor
+  );
+  assert.equal(editRes.ok, true);
+  if (!editRes.ok) return;
+
+  // Direct stock adjusted from 4 -> 2
+  assert.equal(
+    getAvailableStock('prd_tn_01', 'M', editRes.state.products, editRes.state.stockImports, editRes.state.orders),
+    2
+  );
+  // Audit logs record both stock adjustment and product update
+  assert.equal(editRes.state.auditLogs[0].action, 'Điều chỉnh tồn kho');
+  assert.ok(editRes.state.auditLogs[0].detail.includes('Size M: 4 → 2 (-2)'));
+  assert.equal(editRes.state.auditLogs[1].action, 'Sửa mẫu sản phẩm');
+
+  // Historical order ord_01 MUST NOT change name or price
+  const oldOrderAfter = editRes.state.orders.find((o) => o.id === 'ord_01')!;
+  assert.equal(oldOrderAfter.items[0].productName, 'Áo dài Lụa Ngọc Bích');
+  assert.equal(oldOrderAfter.items[0].unitPrice, 1450000);
+  assert.equal(getOrderTotal(oldOrderAfter), oldOrderTotalBefore);
+
+  // 4. Safe archive / delete RBAC & historical order check
+  const hist = hasProductOrderHistory('prd_tn_01', editRes.state.orders);
+  assert.equal(hist.hasOrders, true);
+
+  // Member Giang cannot archive or delete
+  assert.equal(archiveProductWithAudit(editRes.state, 'prd_tn_01', true, giangActor).ok, false);
+  assert.equal(deleteProductWithAudit(editRes.state, 'prd_tn_01', giangActor).ok, false);
+
+  // Admin Ngân archives prd_tn_01
+  const archivedRes = archiveProductWithAudit(editRes.state, 'prd_tn_01', true, nganActor);
+  assert.equal(archivedRes.ok, true);
+  if (!archivedRes.ok) return;
+  assert.equal(archivedRes.state.auditLogs[0].action, 'Ngừng kinh doanh mẫu');
+
+  // Creating a new order with an archived product fails
+  const blockedOrder = createOrderWithValidation(
+    archivedRes.state,
+    {
+      date: '2026-11-16',
+      brand: Brand.TO_NHA,
+      customerName: 'Khách thử',
+      customerPhone: '0909000111',
+      shippingAddress: '10 Tràng Tiền, Hà Nội',
+      shippingMethod: ShippingMethod.PICKUP,
+      shopShippingCost: 0,
+      items: [{ productId: 'prd_tn_01', size: 'M', quantity: 1 }],
+      shippingFee: 0,
+      note: '',
+      paymentStatus: PaymentStatus.UNPAID,
+    },
+    nganActor
+  );
+  assert.equal(blockedOrder.ok, false);
+
+  // Admin deletes TN-04 cleanly
+  const deletedRes = deleteProductWithAudit(archivedRes.state, addRes.product.id, nganActor);
+  assert.equal(deletedRes.ok, true);
+  if (!deletedRes.ok) return;
+  assert.equal(deletedRes.state.products.some((p) => p.id === addRes.product.id), false);
+  assert.equal(deletedRes.state.auditLogs[0].action, 'Xóa mẫu sản phẩm');
+});
+
+test('full order edit & delete recalculate inventory, revenue, and linked shipping expenses', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+
+  // ord_02 initially has VM-02 (Freesize) x1 and VM-01 (Freesize) x2, shopShippingCost 35000
+  const vm01Before = getAvailableStock('prd_vm_01', 'Freesize', seed.products, seed.stockImports, seed.orders);
+  const vm02Before = getAvailableStock('prd_vm_02', 'Freesize', seed.products, seed.stockImports, seed.orders);
+  assert.equal(vm01Before, 8);
+  assert.equal(vm02Before, 1);
+
+  // Edit ord_02: change items to VM-01 x3 (drops VM-02, restores VM-02 +1 -> 2, deducts VM-01 net +1 -> 7), change shopShippingCost 35000 -> 45000, mark PAID
+  const editRes = updateOrderWithValidation(
+    seed,
+    'ord_02',
+    {
+      date: seed.orders.find((o) => o.id === 'ord_02')!.date,
+      brand: Brand.VAN_MIEN,
+      customerName: 'Trần Hoàng Bảo (Sửa)',
+      customerPhone: '0987612409',
+      shippingAddress: 'Số 50 Lý Thường Kiệt, Hà Nội',
+      shippingMethod: ShippingMethod.VIETTEL_POST,
+      shopShippingCost: 45000,
+      shippingCostPayer: 'Giang chi',
+      shippingStatus: ShippingStatus.VTP_CREATED,
+      weightGrams: 1200,
+      items: [{ productId: 'prd_vm_01', size: 'Freesize', quantity: 3, unitPrice: 480000 }],
+      shippingFee: 0,
+      note: 'Đã sửa đơn',
+      paymentStatus: PaymentStatus.PAID,
+    },
+    nganActor
+  );
+  assert.equal(editRes.ok, true);
+  if (!editRes.ok) return;
+
+  assert.equal(
+    getAvailableStock('prd_vm_02', 'Freesize', editRes.state.products, editRes.state.stockImports, editRes.state.orders),
+    2
+  );
+  assert.equal(
+    getAvailableStock('prd_vm_01', 'Freesize', editRes.state.products, editRes.state.stockImports, editRes.state.orders),
+    7
+  );
+  const linkedShipExp = editRes.state.expenses.find((e) => e.linkedOrderId === 'ord_02');
+  assert.ok(linkedShipExp);
+  assert.equal(linkedShipExp.amount, 45000);
+  assert.equal(linkedShipExp.paidBy, 'Giang chi');
+  assert.equal(editRes.order.paymentStatus, PaymentStatus.PAID);
+
+  // Delete ord_02: restores VM-01 +3 -> 10, removes linked shipping expense, subtracts revenue
+  const salesBeforeDelete = computeBrandPnL(
+    editRes.state.products,
+    editRes.state.stockImports,
+    editRes.state.orders,
+    editRes.state.expenses
+  ).total.salesRevenue;
+
+  const afterDelete = deleteOrderWithAudit(editRes.state, 'ord_02', nganActor);
+  assert.equal(afterDelete.orders.some((o) => o.id === 'ord_02'), false);
+  assert.equal(afterDelete.expenses.some((e) => e.linkedOrderId === 'ord_02'), false);
+  assert.equal(
+    getAvailableStock('prd_vm_01', 'Freesize', afterDelete.products, afterDelete.stockImports, afterDelete.orders),
+    10
+  );
+  const salesAfterDelete = computeBrandPnL(
+    afterDelete.products,
+    afterDelete.stockImports,
+    afterDelete.orders,
+    afterDelete.expenses
+  ).total.salesRevenue;
+  assert.equal(salesAfterDelete, salesBeforeDelete - 3 * 480000);
+});
+
+test('stock import edit/delete, budget CRUD, and user account edit/delete behave cleanly', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+  const nganActor: ActorIdentity = { id: 'acc_ngan', name: 'Ngân', role: 'Admin' };
+
+  // Add stock import with linked cash expense, then edit and delete it
+  const impAdded = addStockImportWithAudit(
+    seed,
+    {
+      date: '2026-11-16',
+      productId: 'prd_tn_03',
+      size: 'M',
+      quantity: 5,
+      unitCost: 700000,
+      note: 'Lô test',
+    },
+    true,
+    nganActor
+  );
+  const newImp = impAdded.stockImports[0];
+  assert.equal(
+    getAvailableStock('prd_tn_03', 'M', impAdded.products, impAdded.stockImports, impAdded.orders),
+    8
+  );
+  assert.equal(impAdded.expenses.some((e) => e.linkedImportId === newImp.id && e.amount === 3500000), true);
+
+  const impEdited = updateStockImportWithValidation(
+    impAdded,
+    newImp.id,
+    {
+      date: '2026-11-16',
+      productId: 'prd_tn_03',
+      size: 'M',
+      quantity: 2,
+      unitCost: 650000,
+      note: 'Sửa SL',
+    },
+    nganActor
+  );
+  assert.equal(impEdited.ok, true);
+  if (!impEdited.ok) return;
+  assert.equal(
+    getAvailableStock('prd_tn_03', 'M', impEdited.state.products, impEdited.state.stockImports, impEdited.state.orders),
+    5
+  );
+  assert.equal(
+    impEdited.state.expenses.find((e) => e.linkedImportId === newImp.id)?.amount,
+    1300000
+  );
+
+  const impDeleted = deleteStockImportWithAudit(impEdited.state, newImp.id, nganActor);
+  assert.equal(
+    getAvailableStock('prd_tn_03', 'M', impDeleted.products, impDeleted.stockImports, impDeleted.orders),
+    3
+  );
+  assert.equal(impDeleted.expenses.some((e) => e.linkedImportId === newImp.id), false);
+
+  // Budget CRUD
+  const bdgAdded = addBudgetItemWithAudit(
+    impDeleted,
+    { category: 'Marketing/Ads', detail: 'TikTok Ads', quantity: 2, estimatedUnitPrice: 1000000 },
+    nganActor
+  );
+  const createdBdg = bdgAdded.budgetItems[bdgAdded.budgetItems.length - 1];
+  const bdgUpdated = updateBudgetItemWithAudit(
+    bdgAdded,
+    createdBdg.id,
+    { category: 'Marketing/Ads', detail: 'TikTok Ads Q4', quantity: 3, estimatedUnitPrice: 1200000 },
+    nganActor
+  );
+  assert.equal(
+    bdgUpdated.budgetItems.find((b) => b.id === createdBdg.id)?.estimatedUnitPrice,
+    1200000
+  );
+  const bdgDeleted = deleteBudgetItemWithAudit(bdgUpdated, createdBdg.id, nganActor);
+  assert.equal(bdgDeleted.budgetItems.some((b) => b.id === createdBdg.id), false);
+
+  // User account edit & delete
+  const accEdited = updateUserAccountWithAudit(
+    bdgDeleted,
+    'acc_linh',
+    { name: 'Linh Nhi', username: 'linhnhi', role: 'Thành viên' },
+    nganActor
+  );
+  assert.equal(accEdited.ok, true);
+  if (!accEdited.ok) return;
+  assert.equal(accEdited.state.accounts.find((a) => a.id === 'acc_linh')?.name, 'Linh Nhi');
+
+  // Cannot delete self
+  assert.equal(deleteUserAccountWithAudit(accEdited.state, 'acc_ngan', nganActor).ok, false);
+  const accDeleted = deleteUserAccountWithAudit(accEdited.state, 'acc_linh', nganActor);
+  assert.equal(accDeleted.ok, true);
+  if (!accDeleted.ok) return;
+  assert.equal(accDeleted.state.accounts.some((a) => a.id === 'acc_linh'), false);
+});
+
+test('SheetJS Excel (.xlsx) builders generate valid orders workbook and 3-sheet finance report', () => {
+  const seed = createSeedState(new Date('2026-11-16T10:00:00'));
+
+  const ordersWb = buildOrdersWorkbook(seed.orders);
+  assert.deepEqual(ordersWb.SheetNames, ['Danh_sach_don_hang']);
+  const ordersWs = ordersWb.Sheets['Danh_sach_don_hang'];
+  assert.equal(ordersWs['A1'].v, 'Mã đơn');
+  assert.equal(ordersWs['P1'].v, 'Ghi chú');
+  assert.equal(ordersWs['A2'].v, 'DH-0001');
+  assert.equal(typeof ordersWs['I2'].v, 'number');
+
+  const financeWb = buildFinanceWorkbook(seed);
+  assert.deepEqual(financeWb.SheetNames, [
+    'Tong_hop_P&L',
+    'Doanh_thu_Don_hang',
+    'Chi_tiet_Khoan_chi',
+  ]);
+  assert.equal(financeWb.Sheets['Tong_hop_P&L']['A1'].v, 'BÁO CÁO TỔNG HỢP TÀI CHÍNH & LÃI LỖ (P&L)');
+  assert.equal(financeWb.Sheets['Doanh_thu_Don_hang']['A1'].v, 'Mã đơn');
+  assert.equal(financeWb.Sheets['Chi_tiet_Khoan_chi']['A1'].v, 'Ngày chi');
+});
+

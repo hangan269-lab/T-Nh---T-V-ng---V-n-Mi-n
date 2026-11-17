@@ -105,6 +105,8 @@ export interface Product {
   costPrice: number;
   sellPrice: number;
   initialStock: Partial<Record<SizeOption, number>>;
+  stockAdjustments?: Partial<Record<SizeOption, number>>;
+  isArchived?: boolean;
 }
 
 export interface StockImport {
@@ -166,6 +168,7 @@ export type ExpenseBrandScope = Brand | 'Dùng chung';
 export interface Expense {
   id: string;
   linkedOrderId?: string;
+  linkedImportId?: string;
   date: string; // YYYY-MM-DD
   category: ExpenseCategory | string;
   brandScope: ExpenseBrandScope;

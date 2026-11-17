@@ -230,6 +230,118 @@ export function changeUserPinWithAudit(
   };
 }
 
+export function updateUserAccountWithAudit(
+  state: AppState,
+  targetUserId: string,
+  input: { name: string; username: string; role: UserRole; pin?: string },
+  actor: ActorIdentity
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return { ok: false, error: 'Chỉ Admin mới có quyền chỉnh sửa tài khoản thành viên.' };
+  }
+  const prev = state.accounts.find((a) => a.id === targetUserId);
+  if (!prev) {
+    return { ok: false, error: 'Không tìm thấy tài khoản cần sửa.' };
+  }
+
+  const name = input.name.trim();
+  const username = input.username.trim().toLowerCase().replace(/\s+/g, '');
+  const cleanPin = input.pin !== undefined ? input.pin.trim() : '';
+
+  if (!name || !username) {
+    return { ok: false, error: 'Vui lòng nhập đầy đủ Tên hiển thị và Tên đăng nhập.' };
+  }
+  if (cleanPin && cleanPin.length < 4) {
+    return { ok: false, error: 'Mã PIN mới phải có ít nhất 4 ký tự.' };
+  }
+  const duplicate = state.accounts.some(
+    (a) =>
+      a.id !== targetUserId &&
+      (a.username.toLowerCase() === username || a.name.toLowerCase() === name.toLowerCase())
+  );
+  if (duplicate) {
+    return { ok: false, error: 'Tên đăng nhập hoặc tên thành viên đã tồn tại.' };
+  }
+
+  const adminCount = state.accounts.filter((a) => a.role === 'Admin').length;
+  if (prev.role === 'Admin' && input.role !== 'Admin' && adminCount <= 1) {
+    return { ok: false, error: 'Hệ thống phải giữ lại ít nhất 1 tài khoản Admin.' };
+  }
+
+  const updated: UserAccount = {
+    ...prev,
+    name,
+    username,
+    role: input.role,
+    pin: cleanPin || prev.pin,
+  };
+
+  const diffs: string[] = [];
+  if (prev.name !== updated.name) diffs.push(`tên '${prev.name}' → '${updated.name}'`);
+  if (prev.username !== updated.username) diffs.push(`username '${prev.username}' → '${updated.username}'`);
+  if (prev.role !== updated.role) diffs.push(`vai trò '${prev.role}' → '${updated.role}'`);
+  if (cleanPin && cleanPin !== prev.pin) diffs.push('đổi mã PIN');
+
+  if (diffs.length === 0) return { ok: true, state };
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài khoản',
+    action: 'Sửa tài khoản thành viên',
+    detail: `${actor.name} đã sửa tài khoản ${prev.name}: ${diffs.join('; ')}`,
+    oldValue: `${prev.name} (${prev.username} · ${prev.role})`,
+    newValue: `${updated.name} (${updated.username} · ${updated.role})`,
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      accounts: state.accounts.map((a) => (a.id === targetUserId ? updated : a)),
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function deleteUserAccountWithAudit(
+  state: AppState,
+  targetUserId: string,
+  actor: ActorIdentity
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return { ok: false, error: 'Chỉ Admin mới có quyền xóa tài khoản thành viên.' };
+  }
+  if (targetUserId === actor.id) {
+    return { ok: false, error: 'Không thể tự xóa tài khoản đang đăng nhập.' };
+  }
+  const target = state.accounts.find((a) => a.id === targetUserId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy tài khoản cần xóa.' };
+  }
+  const adminCount = state.accounts.filter((a) => a.role === 'Admin').length;
+  if (target.role === 'Admin' && adminCount <= 1) {
+    return { ok: false, error: 'Hệ thống phải giữ lại ít nhất 1 tài khoản Admin.' };
+  }
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài khoản',
+    action: 'Xóa tài khoản thành viên',
+    detail: `${actor.name} đã xóa tài khoản '${target.name}' (${target.username} · ${target.role})`,
+    oldValue: `${target.name} (${target.username})`,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      accounts: state.accounts.filter((a) => a.id !== targetUserId),
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
 export function getOrderItemsSubtotal(order: Pick<Order, 'items'>): number {
   return order.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 }
@@ -282,8 +394,48 @@ export interface InventoryRow {
   initialStock: number;
   totalImported: number;
   totalSold: number;
+  adjustment: number;
   currentStock: number;
   isLowStock: boolean;
+  isArchived: boolean;
+}
+
+export function suggestNextProductCode(brand: Brand, products: Product[]): string {
+  const prefix =
+    brand === Brand.TO_NHA ? 'TN' : brand === Brand.TO_VUONG ? 'TV' : 'VM';
+  const regex = new RegExp(`^${prefix}[-_]?(\\d+)$`, 'i');
+  let maxNum = 0;
+  for (const p of products) {
+    const match = p.code.trim().match(regex);
+    if (match) {
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > maxNum) {
+        maxNum = n;
+      }
+    }
+  }
+  return `${prefix}-${String(maxNum + 1).padStart(2, '0')}`;
+}
+
+export function hasProductOrderHistory(
+  productId: string,
+  orders: Order[]
+): { hasOrders: boolean; orderCount: number; activeOrderCount: number } {
+  let orderCount = 0;
+  let activeOrderCount = 0;
+  for (const o of orders) {
+    if (o.items.some((item) => item.productId === productId)) {
+      orderCount += 1;
+      if (!o.isCancelled) {
+        activeOrderCount += 1;
+      }
+    }
+  }
+  return {
+    hasOrders: orderCount > 0,
+    orderCount,
+    activeOrderCount,
+  };
 }
 
 export function getProductActiveSizes(
@@ -294,7 +446,10 @@ export function getProductActiveSizes(
   const sizeSet = new Set<SizeOption>();
 
   for (const size of ALL_SIZES) {
-    if (product.initialStock[size] !== undefined) {
+    if (
+      product.initialStock[size] !== undefined ||
+      product.stockAdjustments?.[size] !== undefined
+    ) {
       sizeSet.add(size);
     }
   }
@@ -332,6 +487,7 @@ export function computeInventoryRows(
     const sizes = getProductActiveSizes(product, stockImports, orders);
     for (const size of sizes) {
       const initialStock = product.initialStock[size] ?? 0;
+      const adjustment = product.stockAdjustments?.[size] ?? 0;
       const totalImported = stockImports
         .filter((imp) => imp.productId === product.id && imp.size === size)
         .reduce((sum, imp) => sum + imp.quantity, 0);
@@ -340,7 +496,7 @@ export function computeInventoryRows(
         .flatMap((o) => o.items)
         .filter((item) => item.productId === product.id && item.size === size)
         .reduce((sum, item) => sum + item.quantity, 0);
-      const currentStock = initialStock + totalImported - totalSold;
+      const currentStock = initialStock + adjustment + totalImported - totalSold;
 
       rows.push({
         key: `${product.id}_${size}`,
@@ -354,8 +510,10 @@ export function computeInventoryRows(
         initialStock,
         totalImported,
         totalSold,
+        adjustment,
         currentStock,
         isLowStock: currentStock <= 1,
+        isArchived: Boolean(product.isArchived),
       });
     }
   }
@@ -374,6 +532,7 @@ export function getAvailableStock(
   if (!product) return 0;
 
   const initialStock = product.initialStock[size] ?? 0;
+  const adjustment = product.stockAdjustments?.[size] ?? 0;
   const totalImported = stockImports
     .filter((imp) => imp.productId === productId && imp.size === size)
     .reduce((sum, imp) => sum + imp.quantity, 0);
@@ -383,7 +542,7 @@ export function getAvailableStock(
     .filter((item) => item.productId === productId && item.size === size)
     .reduce((sum, item) => sum + item.quantity, 0);
 
-  return initialStock + totalImported - totalSold;
+  return initialStock + adjustment + totalImported - totalSold;
 }
 
 export interface BrandPnLRow {
@@ -657,6 +816,12 @@ export function createOrderWithValidation(
     if (!product) {
       return { ok: false, error: 'Không tìm thấy mẫu sản phẩm đã chọn.' };
     }
+    if (product.isArchived) {
+      return {
+        ok: false,
+        error: `Mẫu "${product.code} - ${product.name}" đã ngừng kinh doanh, không thể tạo đơn mới.`,
+      };
+    }
     if (!Number.isFinite(rawItem.quantity) || rawItem.quantity <= 0) {
       return { ok: false, error: `Số lượng của "${product.name}" phải lớn hơn 0.` };
     }
@@ -703,7 +868,15 @@ export function createOrderWithValidation(
   }
 
   const nowISO = new Date().toISOString();
-  const nextSeq = state.orders.length + 1;
+  let maxOrderNum = 0;
+  for (const o of state.orders) {
+    const match = o.code.match(/^DH-(\d+)$/i);
+    if (match) {
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > maxOrderNum) maxOrderNum = n;
+    }
+  }
+  const nextSeq = Math.max(state.orders.length + 1, maxOrderNum + 1);
   const code = `DH-${String(nextSeq).padStart(4, '0')}`;
   const order: Order = {
     id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -946,6 +1119,216 @@ export function markOrdersShippingStatus(
     orders: state.orders.map((o) =>
       idSet.has(o.id) && !o.isCancelled ? { ...o, shippingStatus: status } : o
     ),
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function updateOrderWithValidation(
+  state: AppState,
+  orderId: string,
+  draft: OrderDraftInput,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): OrderCreateResult {
+  const prevOrder = state.orders.find((o) => o.id === orderId);
+  if (!prevOrder) {
+    return { ok: false, error: 'Không tìm thấy đơn hàng cần chỉnh sửa.' };
+  }
+
+  const customerName = draft.customerName.trim();
+  const customerPhone = draft.customerPhone.trim();
+  const shippingAddress = draft.shippingAddress.trim();
+
+  if (!draft.date) {
+    return { ok: false, error: 'Vui lòng chọn ngày đặt hàng.' };
+  }
+  if (!customerName) {
+    return { ok: false, error: 'Vui lòng nhập tên người nhận.' };
+  }
+  if (!customerPhone) {
+    return { ok: false, error: 'Vui lòng nhập số điện thoại người nhận.' };
+  }
+  if (!shippingAddress) {
+    return {
+      ok: false,
+      error: 'Vui lòng nhập địa chỉ giao hàng chi tiết.',
+    };
+  }
+  if (!draft.items || draft.items.length === 0) {
+    return { ok: false, error: 'Đơn hàng cần ít nhất 1 sản phẩm.' };
+  }
+  if (draft.shippingFee < 0 || Number.isNaN(draft.shippingFee)) {
+    return { ok: false, error: 'Phí ship khách trả không hợp lệ.' };
+  }
+  if (draft.shopShippingCost < 0 || Number.isNaN(draft.shopShippingCost)) {
+    return { ok: false, error: 'Cước phí vận chuyển shop trả không hợp lệ.' };
+  }
+
+  const weightGrams = draft.weightGrams ?? 500;
+  if (!Number.isFinite(weightGrams) || weightGrams <= 0) {
+    return { ok: false, error: 'Trọng lượng đơn hàng (gram) phải lớn hơn 0.' };
+  }
+
+  const prevProductIds = new Set(prevOrder.items.map((i) => i.productId));
+  const requestedBySku = new Map<string, { product: Product; size: SizeOption; qty: number }>();
+  const resolvedItems: OrderItem[] = [];
+
+  for (const rawItem of draft.items) {
+    if (!rawItem.productId) {
+      return { ok: false, error: 'Vui lòng chọn mẫu sản phẩm cho tất cả các dòng.' };
+    }
+    const product = state.products.find((p) => p.id === rawItem.productId);
+    if (!product) {
+      const legacyItem = prevOrder.items.find((i) => i.productId === rawItem.productId);
+      if (!legacyItem) {
+        return { ok: false, error: 'Không tìm thấy mẫu sản phẩm đã chọn.' };
+      }
+      if (!Number.isFinite(rawItem.quantity) || rawItem.quantity <= 0) {
+        return { ok: false, error: `Số lượng của "${legacyItem.productName}" phải lớn hơn 0.` };
+      }
+      resolvedItems.push({
+        ...legacyItem,
+        size: rawItem.size,
+        quantity: rawItem.quantity,
+        unitPrice:
+          rawItem.unitPrice !== undefined && Number.isFinite(rawItem.unitPrice)
+            ? rawItem.unitPrice
+            : legacyItem.unitPrice,
+      });
+      continue;
+    }
+
+    if (product.isArchived && !prevProductIds.has(product.id)) {
+      return {
+        ok: false,
+        error: `Mẫu "${product.code} - ${product.name}" đã ngừng kinh doanh, không thể thêm vào đơn.`,
+      };
+    }
+    if (!Number.isFinite(rawItem.quantity) || rawItem.quantity <= 0) {
+      return { ok: false, error: `Số lượng của "${product.name}" phải lớn hơn 0.` };
+    }
+    const unitPrice =
+      rawItem.unitPrice !== undefined && Number.isFinite(rawItem.unitPrice)
+        ? rawItem.unitPrice
+        : product.sellPrice;
+    if (unitPrice < 0) {
+      return { ok: false, error: `Đơn giá của "${product.name}" không hợp lệ.` };
+    }
+
+    const skuKey = `${product.id}_${rawItem.size}`;
+    const existing = requestedBySku.get(skuKey);
+    if (existing) {
+      existing.qty += rawItem.quantity;
+    } else {
+      requestedBySku.set(skuKey, { product, size: rawItem.size, qty: rawItem.quantity });
+    }
+
+    resolvedItems.push({
+      productId: product.id,
+      productCode: product.code,
+      productName: product.name,
+      size: rawItem.size,
+      quantity: rawItem.quantity,
+      unitPrice,
+    });
+  }
+
+  // Validate stock excluding prevOrder's own items (restores old quantities first, then deducts new)
+  if (!prevOrder.isCancelled) {
+    const ordersWithoutPrev = state.orders.filter((o) => o.id !== orderId);
+    for (const { product, size, qty } of requestedBySku.values()) {
+      const available = getAvailableStock(
+        product.id,
+        size,
+        state.products,
+        state.stockImports,
+        ordersWithoutPrev
+      );
+      if (qty > available) {
+        return {
+          ok: false,
+          error: `Tồn kho không đủ cho "${product.code} - ${product.name}" (Size ${size}): còn ${available} (đã hoàn phần đơn cũ), đang đặt ${qty}.`,
+        };
+      }
+    }
+  }
+
+  const nowISO = new Date().toISOString();
+  const isNowPaid = draft.paymentStatus === PaymentStatus.PAID;
+  const updatedOrder: Order = {
+    ...prevOrder,
+    date: draft.date,
+    brand: draft.brand,
+    customerName,
+    customerPhone,
+    shippingAddress,
+    shippingMethod: draft.shippingMethod,
+    shopShippingCost: Math.round(draft.shopShippingCost || 0),
+    shippingCostPayer: draft.shippingCostPayer?.trim() || prevOrder.shippingCostPayer || 'Ngân chi',
+    shippingStatus: draft.shippingStatus ?? prevOrder.shippingStatus,
+    weightGrams: Math.round(weightGrams),
+    items: resolvedItems,
+    shippingFee: Math.round(draft.shippingFee || 0),
+    note: draft.note.trim(),
+    paymentStatus: draft.paymentStatus,
+    paymentConfirmedBy: isNowPaid
+      ? prevOrder.paymentConfirmedBy ?? actor.name
+      : undefined,
+    paymentConfirmedAt: isNowPaid
+      ? prevOrder.paymentConfirmedAt ?? nowISO
+      : undefined,
+  };
+
+  const nextExpenses = syncOrderShippingExpense(state.expenses, updatedOrder);
+  const prevTotal = getOrderTotal(prevOrder);
+  const nextTotal = getOrderTotal(updatedOrder);
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Đơn hàng',
+    action: 'Sửa đơn hàng',
+    detail: `${actor.name} đã chỉnh sửa đơn hàng #${updatedOrder.code} (Khách: ${updatedOrder.customerName} · Tổng: ${formatCompactVND(nextTotal)})`,
+    oldValue: `${prevOrder.customerName} · ${formatCompactVND(prevTotal)}`,
+    newValue: `${updatedOrder.customerName} · ${formatCompactVND(nextTotal)}`,
+    timestamp: nowISO,
+  });
+
+  return {
+    ok: true,
+    order: updatedOrder,
+    state: {
+      ...state,
+      orders: state.orders.map((o) => (o.id === orderId ? updatedOrder : o)),
+      expenses: nextExpenses,
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function deleteOrderWithAudit(
+  state: AppState,
+  orderId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const target = state.orders.find((o) => o.id === orderId);
+  if (!target) return state;
+
+  const totalAmount = getOrderTotal(target);
+  const nextOrders = state.orders.filter((o) => o.id !== orderId);
+  const nextExpenses = state.expenses.filter((e) => e.linkedOrderId !== orderId);
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Đơn hàng',
+    action: 'Xóa đơn hàng',
+    detail: `${actor.name} đã xóa đơn hàng #${target.code} của khách ${target.customerName} (${formatCompactVND(totalAmount)}), hoàn lại tồn kho và xóa cước VC liên kết`,
+    oldValue: `#${target.code} · ${target.customerName} (${formatCompactVND(totalAmount)})`,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ...state,
+    orders: nextOrders,
+    expenses: nextExpenses,
     auditLogs: [log, ...state.auditLogs],
   };
 }
@@ -1256,92 +1639,324 @@ export function deleteShareholderWithAudit(
   };
 }
 
-export function saveProductWithAudit(
+export interface SaveProductInput {
+  id?: string;
+  code: string;
+  name: string;
+  brand: Brand;
+  costPrice: number;
+  sellPrice: number;
+  initialStock: Partial<Record<SizeOption, number>>;
+  targetCurrentStock?: Partial<Record<SizeOption, number>>;
+  adjustmentReason?: string;
+}
+
+export type SaveProductResult =
+  | { ok: true; state: AppState; product: Product; hasStockAdjustment: boolean }
+  | { ok: false; error: string };
+
+export function saveProductWithValidation(
   state: AppState,
-  productInput: Omit<Product, 'id'> & { id?: string },
-  actor: ActorIdentity
-): AppState {
+  productInput: SaveProductInput,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): SaveProductResult {
+  const code = productInput.code.trim();
+  const name = productInput.name.trim();
+  const costPrice = Math.round(Number(productInput.costPrice));
+  const sellPrice = Math.round(Number(productInput.sellPrice));
+
+  if (!code || !name) {
+    return { ok: false, error: 'Vui lòng nhập đầy đủ Mã mẫu và Tên mẫu sản phẩm.' };
+  }
+  if (!Number.isFinite(costPrice) || costPrice < 0 || !Number.isFinite(sellPrice) || sellPrice < 0) {
+    return { ok: false, error: 'Giá nhập và Giá bán niêm yết phải là số hợp lệ không âm.' };
+  }
+
+  const duplicateCode = state.products.some(
+    (p) => p.id !== productInput.id && p.code.trim().toLowerCase() === code.toLowerCase()
+  );
+  if (duplicateCode) {
+    return { ok: false, error: `Mã mẫu "${code}" đã tồn tại trong danh mục.` };
+  }
+
   if (productInput.id) {
     const prev = state.products.find((p) => p.id === productInput.id);
-    if (!prev) return state;
+    if (!prev) {
+      return { ok: false, error: 'Không tìm thấy mẫu sản phẩm cần chỉnh sửa.' };
+    }
 
-    const updated: Product = {
-      ...prev,
-      ...productInput,
-      id: prev.id,
+    const nextAdjustments: Partial<Record<SizeOption, number>> = {
+      ...(prev.stockAdjustments ?? {}),
     };
+    const nextInitialStock: Partial<Record<SizeOption, number>> = productInput.targetCurrentStock
+      ? { ...prev.initialStock }
+      : { ...productInput.initialStock };
 
-    const diffs: string[] = [];
-    const oldVals: string[] = [];
-    const newVals: string[] = [];
+    const infoDiffs: string[] = [];
+    const oldInfoVals: string[] = [];
+    const newInfoVals: string[] = [];
 
-    if (prev.code !== updated.code) {
-      diffs.push(`mã từ '${prev.code}' thành '${updated.code}'`);
+    if (prev.code !== code) {
+      infoDiffs.push(`mã từ '${prev.code}' thành '${code}'`);
+      oldInfoVals.push(prev.code);
+      newInfoVals.push(code);
     }
-    if (prev.name !== updated.name) {
-      diffs.push(`tên từ '${prev.name}' thành '${updated.name}'`);
+    if (prev.name !== name) {
+      infoDiffs.push(`tên từ '${prev.name}' thành '${name}'`);
+      oldInfoVals.push(prev.name);
+      newInfoVals.push(name);
     }
-    if (prev.brand !== updated.brand) {
-      diffs.push(`nhánh từ '${prev.brand}' thành '${updated.brand}'`);
+    if (prev.brand !== productInput.brand) {
+      infoDiffs.push(`nhánh từ '${prev.brand}' thành '${productInput.brand}'`);
+      oldInfoVals.push(prev.brand);
+      newInfoVals.push(productInput.brand);
     }
-    if (prev.costPrice !== updated.costPrice) {
-      diffs.push(
-        `giá nhập từ ${formatCompactVND(prev.costPrice)} thành ${formatCompactVND(updated.costPrice)}`
+    if (prev.costPrice !== costPrice) {
+      infoDiffs.push(
+        `giá nhập từ ${formatCompactVND(prev.costPrice)} thành ${formatCompactVND(costPrice)}`
       );
-      oldVals.push(`Nhập ${formatCompactVND(prev.costPrice)}`);
-      newVals.push(`Nhập ${formatCompactVND(updated.costPrice)}`);
+      oldInfoVals.push(`Nhập ${formatCompactVND(prev.costPrice)}`);
+      newInfoVals.push(`Nhập ${formatCompactVND(costPrice)}`);
     }
-    if (prev.sellPrice !== updated.sellPrice) {
-      diffs.push(
-        `giá bán từ ${formatCompactVND(prev.sellPrice)} thành ${formatCompactVND(updated.sellPrice)}`
+    if (prev.sellPrice !== sellPrice) {
+      infoDiffs.push(
+        `giá bán từ ${formatCompactVND(prev.sellPrice)} thành ${formatCompactVND(sellPrice)}`
       );
-      oldVals.push(`Bán ${formatCompactVND(prev.sellPrice)}`);
-      newVals.push(`Bán ${formatCompactVND(updated.sellPrice)}`);
+      oldInfoVals.push(`Bán ${formatCompactVND(prev.sellPrice)}`);
+      newInfoVals.push(`Bán ${formatCompactVND(sellPrice)}`);
     }
 
-    for (const s of ALL_SIZES) {
-      const prevQty = prev.initialStock[s] ?? 0;
-      const nextQty = updated.initialStock[s] ?? 0;
-      if (prevQty !== nextQty) {
-        diffs.push(`tồn đầu Size ${s} từ ${prevQty} thành ${nextQty}`);
-        oldVals.push(`${s}:${prevQty}`);
-        newVals.push(`${s}:${nextQty}`);
+    const stockDiffs: string[] = [];
+    const oldStockVals: string[] = [];
+    const newStockVals: string[] = [];
+
+    if (productInput.targetCurrentStock) {
+      for (const s of ALL_SIZES) {
+        const targetRaw = productInput.targetCurrentStock[s];
+        if (targetRaw === undefined) continue;
+        const targetQty = Math.round(Number(targetRaw));
+        if (!Number.isFinite(targetQty) || targetQty < 0) {
+          return { ok: false, error: `Số lượng tồn kho Size ${s} không được nhỏ hơn 0.` };
+        }
+        const beforeQty = getAvailableStock(
+          prev.id,
+          s,
+          state.products,
+          state.stockImports,
+          state.orders
+        );
+        if (targetQty !== beforeQty) {
+          const delta = targetQty - beforeQty;
+          nextAdjustments[s] = (prev.stockAdjustments?.[s] ?? 0) + delta;
+          if (prev.initialStock[s] === undefined) {
+            nextInitialStock[s] = 0;
+          }
+          const deltaLabel = delta > 0 ? `+${delta}` : String(delta);
+          stockDiffs.push(`Size ${s}: ${beforeQty} → ${targetQty} (${deltaLabel})`);
+          oldStockVals.push(`${s}: ${beforeQty}`);
+          newStockVals.push(`${s}: ${targetQty}`);
+        }
+      }
+    } else {
+      for (const s of ALL_SIZES) {
+        const prevQty = prev.initialStock[s] ?? 0;
+        const nextQty = nextInitialStock[s] ?? 0;
+        if (prevQty !== nextQty) {
+          stockDiffs.push(`tồn đầu Size ${s} từ ${prevQty} thành ${nextQty}`);
+          oldStockVals.push(`${s}:${prevQty}`);
+          newStockVals.push(`${s}:${nextQty}`);
+        }
       }
     }
 
-    if (diffs.length === 0) return state;
+    const updated: Product = {
+      ...prev,
+      code,
+      name,
+      brand: productInput.brand,
+      costPrice,
+      sellPrice,
+      initialStock: nextInitialStock,
+      stockAdjustments: nextAdjustments,
+    };
 
-    const log = createAuditEntry({
-      actor,
-      category: 'Kho hàng',
-      action: 'Sửa mẫu & tồn kho',
-      detail: `${actor.name} đã sửa mẫu ${updated.code} (${updated.name}): ${diffs.join('; ')}`,
-      oldValue: oldVals.join(' · ') || undefined,
-      newValue: newVals.join(' · ') || undefined,
-    });
+    if (infoDiffs.length === 0 && stockDiffs.length === 0) {
+      return { ok: true, state, product: prev, hasStockAdjustment: false };
+    }
+
+    const newLogs: AuditLogEntry[] = [];
+    if (infoDiffs.length > 0) {
+      newLogs.push(
+        createAuditEntry({
+          actor,
+          category: 'Kho hàng',
+          action: 'Sửa mẫu sản phẩm',
+          detail: `${actor.name} đã sửa mẫu ${updated.code} (${updated.name}): ${infoDiffs.join('; ')}`,
+          oldValue: oldInfoVals.join(' · ') || undefined,
+          newValue: newInfoVals.join(' · ') || undefined,
+        })
+      );
+    }
+
+    if (stockDiffs.length > 0) {
+      const reasonSuffix = productInput.adjustmentReason?.trim()
+        ? ` · Lý do: ${productInput.adjustmentReason.trim()}`
+        : '';
+      newLogs.unshift(
+        createAuditEntry({
+          actor,
+          category: 'Kho hàng',
+          action: 'Điều chỉnh tồn kho',
+          detail: `${actor.name} đã điều chỉnh tồn kho ${updated.code} (${updated.name}): ${stockDiffs.join(', ')}${reasonSuffix}`,
+          oldValue: oldStockVals.join(' · ') || undefined,
+          newValue: newStockVals.join(' · ') || undefined,
+        })
+      );
+    }
 
     return {
-      ...state,
-      products: state.products.map((p) => (p.id === prev.id ? updated : p)),
-      auditLogs: [log, ...state.auditLogs],
+      ok: true,
+      product: updated,
+      hasStockAdjustment: stockDiffs.length > 0,
+      state: {
+        ...state,
+        products: state.products.map((p) => (p.id === prev.id ? updated : p)),
+        auditLogs: [...newLogs, ...state.auditLogs],
+      },
     };
   }
 
+  const normalizedInitialStock: Partial<Record<SizeOption, number>> = {};
+  const stockSummaryParts: string[] = [];
+  for (const s of ALL_SIZES) {
+    if (productInput.initialStock[s] !== undefined) {
+      const qty = Math.max(0, Math.round(Number(productInput.initialStock[s]) || 0));
+      normalizedInitialStock[s] = qty;
+      stockSummaryParts.push(`${s}:${qty}`);
+    }
+  }
+
   const newProduct: Product = {
-    ...productInput,
     id: `prd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    code,
+    name,
+    brand: productInput.brand,
+    costPrice,
+    sellPrice,
+    initialStock: normalizedInitialStock,
+    isArchived: false,
   };
+
+  const stockNote =
+    stockSummaryParts.length > 0 ? ` · Tồn đầu: ${stockSummaryParts.join(', ')}` : '';
   const log = createAuditEntry({
     actor,
     category: 'Kho hàng',
     action: 'Thêm mẫu mới',
-    detail: `${actor.name} đã thêm mẫu ${newProduct.code} · ${newProduct.name} (${newProduct.brand}, giá bán ${formatCompactVND(newProduct.sellPrice)})`,
+    detail: `${actor.name} đã thêm mẫu ${newProduct.code} · ${newProduct.name} (${newProduct.brand}, nhập ${formatCompactVND(newProduct.costPrice)}, bán ${formatCompactVND(newProduct.sellPrice)}${stockNote})`,
   });
 
   return {
-    ...state,
-    products: [newProduct, ...state.products],
-    auditLogs: [log, ...state.auditLogs],
+    ok: true,
+    product: newProduct,
+    hasStockAdjustment: false,
+    state: {
+      ...state,
+      products: [newProduct, ...state.products],
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function saveProductWithAudit(
+  state: AppState,
+  productInput: SaveProductInput,
+  actor: ActorIdentity
+): AppState {
+  const res = saveProductWithValidation(state, productInput, actor);
+  return res.ok ? res.state : state;
+}
+
+export function archiveProductWithAudit(
+  state: AppState,
+  productId: string,
+  archive: boolean,
+  actor: ActorIdentity
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return {
+      ok: false,
+      error: 'Chỉ tài khoản Admin (Ngân) mới có quyền ngừng kinh doanh hoặc mở bán lại mẫu sản phẩm.',
+    };
+  }
+  const target = state.products.find((p) => p.id === productId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy mẫu sản phẩm.' };
+  }
+  if (Boolean(target.isArchived) === archive) {
+    return { ok: true, state };
+  }
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: archive ? 'Ngừng kinh doanh mẫu' : 'Mở bán lại mẫu',
+    detail: archive
+      ? `${actor.name} đã chuyển mẫu ${target.code} (${target.name}) sang Ngừng kinh doanh (ẩn khỏi đơn mới, giữ số liệu báo cáo cũ)`
+      : `${actor.name} đã mở bán lại mẫu ${target.code} (${target.name})`,
+    oldValue: archive ? 'Đang kinh doanh' : 'Ngừng kinh doanh',
+    newValue: archive ? 'Ngừng kinh doanh' : 'Đang kinh doanh',
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      products: state.products.map((p) =>
+        p.id === productId ? { ...p, isArchived: archive } : p
+      ),
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function deleteProductWithAudit(
+  state: AppState,
+  productId: string,
+  actor: ActorIdentity
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  if (actor.role !== 'Admin') {
+    return {
+      ok: false,
+      error: 'Chỉ tài khoản Admin (Ngân) mới có quyền xóa mẫu sản phẩm khỏi danh mục.',
+    };
+  }
+  const target = state.products.find((p) => p.id === productId);
+  if (!target) {
+    return { ok: false, error: 'Không tìm thấy mẫu sản phẩm cần xóa.' };
+  }
+
+  const history = hasProductOrderHistory(productId, state.orders);
+  const historyNote = history.hasOrders
+    ? ` (đã bảo toàn dữ liệu trên ${history.orderCount} đơn hàng cũ)`
+    : '';
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Xóa mẫu sản phẩm',
+    detail: `${actor.name} đã xóa hoàn toàn mẫu ${target.code} (${target.name}) khỏi danh mục kho hàng${historyNote}`,
+    oldValue: `${target.code} · ${target.name}`,
+    newValue: 'Đã xóa hoàn toàn',
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      products: state.products.filter((p) => p.id !== productId),
+      auditLogs: [log, ...state.auditLogs],
+    },
   };
 }
 
@@ -1362,6 +1977,7 @@ export function addStockImportWithAudit(
   if (alsoRecordCashExpense && product) {
     nextExpenses.unshift({
       id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      linkedImportId: newImport.id,
       date: imp.date,
       category: 'Nhập hàng',
       brandScope: product.brand,
@@ -1387,6 +2003,187 @@ export function addStockImportWithAudit(
     ...state,
     stockImports: [newImport, ...state.stockImports],
     expenses: nextExpenses,
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function updateStockImportWithValidation(
+  state: AppState,
+  importId: string,
+  patch: Omit<StockImport, 'id' | 'enteredBy'>,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): { ok: true; state: AppState } | { ok: false; error: string } {
+  const prev = state.stockImports.find((i) => i.id === importId);
+  if (!prev) {
+    return { ok: false, error: 'Không tìm thấy phiếu nhập kho cần sửa.' };
+  }
+  const qty = Math.round(Number(patch.quantity));
+  const unitCost = Math.round(Number(patch.unitCost));
+  if (!patch.date || !patch.productId) {
+    return { ok: false, error: 'Vui lòng chọn đầy đủ ngày nhập và mẫu sản phẩm.' };
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    return { ok: false, error: 'Số lượng nhập phải lớn hơn 0.' };
+  }
+  if (!Number.isFinite(unitCost) || unitCost < 0) {
+    return { ok: false, error: 'Đơn giá nhập không hợp lệ.' };
+  }
+
+  const updated: StockImport = {
+    ...prev,
+    date: patch.date,
+    productId: patch.productId,
+    size: patch.size,
+    quantity: qty,
+    unitCost,
+    note: patch.note?.trim() ?? '',
+  };
+
+  const nextStockImports = state.stockImports.map((i) => (i.id === importId ? updated : i));
+  const product = state.products.find((p) => p.id === updated.productId);
+  const nextExpenses = state.expenses.map((e) =>
+    e.linkedImportId === importId && product
+      ? {
+          ...e,
+          date: updated.date,
+          brandScope: product.brand,
+          detail: `Nhập kho ${product.code} (${updated.size}) × ${updated.quantity}`,
+          amount: updated.quantity * updated.unitCost,
+          receiptNote: updated.note || 'Phiếu nhập kho',
+          updatedBy: actor.name,
+          updatedAt: new Date().toISOString(),
+        }
+      : e
+  );
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Sửa phiếu nhập kho',
+    detail: `${actor.name} đã sửa phiếu nhập ${
+      product ? `${product.code} (${updated.size})` : updated.productId
+    }: SL ${prev.quantity} → ${updated.quantity}, giá ${formatCompactVND(prev.unitCost)} → ${formatCompactVND(updated.unitCost)}`,
+    oldValue: `SL ${prev.quantity} · ${formatCompactVND(prev.unitCost)}`,
+    newValue: `SL ${updated.quantity} · ${formatCompactVND(updated.unitCost)}`,
+  });
+
+  return {
+    ok: true,
+    state: {
+      ...state,
+      stockImports: nextStockImports,
+      expenses: nextExpenses,
+      auditLogs: [log, ...state.auditLogs],
+    },
+  };
+}
+
+export function deleteStockImportWithAudit(
+  state: AppState,
+  importId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const target = state.stockImports.find((i) => i.id === importId);
+  if (!target) return state;
+
+  const product = state.products.find((p) => p.id === target.productId);
+  const nextImports = state.stockImports.filter((i) => i.id !== importId);
+  const nextExpenses = state.expenses.filter((e) => e.linkedImportId !== importId);
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Xóa phiếu nhập kho',
+    detail: `${actor.name} đã xóa phiếu nhập +${target.quantity} ${
+      product ? `${product.code} · ${product.name}` : target.productId
+    } (Size ${target.size}, thành tiền ${formatCompactVND(target.quantity * target.unitCost)})`,
+    oldValue: `${product?.code ?? target.productId} (${target.size}) × ${target.quantity}`,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ...state,
+    stockImports: nextImports,
+    expenses: nextExpenses,
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function addBudgetItemWithAudit(
+  state: AppState,
+  item: Omit<BudgetItem, 'id'>,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const created: BudgetItem = {
+    ...item,
+    id: `bdg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Thêm dự trù ngân sách',
+    detail: `${actor.name} đã thêm dự trù '${created.detail}' (${created.quantity} × ${formatCompactVND(created.estimatedUnitPrice)})`,
+  });
+  return {
+    ...state,
+    budgetItems: [...state.budgetItems, created],
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function updateBudgetItemWithAudit(
+  state: AppState,
+  budgetId: string,
+  patch: Omit<BudgetItem, 'id'>,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const prev = state.budgetItems.find((b) => b.id === budgetId);
+  if (!prev) return state;
+
+  const updated: BudgetItem = {
+    id: prev.id,
+    category: patch.category,
+    detail: patch.detail.trim() || prev.detail,
+    quantity: Math.max(1, Math.round(Number(patch.quantity) || 1)),
+    estimatedUnitPrice: Math.max(0, Math.round(Number(patch.estimatedUnitPrice) || 0)),
+  };
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Sửa dự trù ngân sách',
+    detail: `${actor.name} đã sửa dự trù '${updated.detail}': ${formatCompactVND(prev.quantity * prev.estimatedUnitPrice)} → ${formatCompactVND(updated.quantity * updated.estimatedUnitPrice)}`,
+    oldValue: formatCompactVND(prev.quantity * prev.estimatedUnitPrice),
+    newValue: formatCompactVND(updated.quantity * updated.estimatedUnitPrice),
+  });
+
+  return {
+    ...state,
+    budgetItems: state.budgetItems.map((b) => (b.id === budgetId ? updated : b)),
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function deleteBudgetItemWithAudit(
+  state: AppState,
+  budgetId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const target = state.budgetItems.find((b) => b.id === budgetId);
+  if (!target) return state;
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Tài chính',
+    action: 'Xóa dự trù ngân sách',
+    detail: `${actor.name} đã xóa dòng dự trù '${target.detail}' (${formatCompactVND(target.quantity * target.estimatedUnitPrice)})`,
+    oldValue: target.detail,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ...state,
+    budgetItems: state.budgetItems.filter((b) => b.id !== budgetId),
     auditLogs: [log, ...state.auditLogs],
   };
 }
@@ -1472,7 +2269,11 @@ export function parseImportedJSON(
     return {
       ok: true,
       state: {
-        products: candidate.products,
+        products: candidate.products.map((p: Product) => ({
+          ...p,
+          stockAdjustments: p.stockAdjustments ?? undefined,
+          isArchived: Boolean(p.isArchived),
+        })),
         stockImports: candidate.stockImports,
         orders: candidate.orders.map(normalizeImportedOrder),
         shareholders: candidate.shareholders,

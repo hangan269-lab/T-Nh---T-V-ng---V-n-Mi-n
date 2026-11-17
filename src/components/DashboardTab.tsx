@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, CheckCircle2, Clock, Download } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Clock, Download, FileSpreadsheet, Trash2 } from 'lucide-react';
 import { AppState, BRAND_SUBTITLES, PaymentStatus } from '../types/erp';
 import {
   computeBrandPnL,
@@ -14,16 +14,24 @@ import {
 
 interface DashboardTabProps {
   state: AppState;
+  isAdmin?: boolean;
+  hasAnyData?: boolean;
   onNavigateTab: (tab: 'orders' | 'inventory' | 'finance' | 'budget') => void;
   onConfirmPayment: (orderId: string) => void;
   onExportPnLCSV: () => void;
+  onExportFinanceXLSX: () => void;
+  onRequestClearSampleData?: () => void;
 }
 
 export const DashboardTab: React.FC<DashboardTabProps> = ({
   state,
+  isAdmin = false,
+  hasAnyData = false,
   onNavigateTab,
   onConfirmPayment,
   onExportPnLCSV,
+  onExportFinanceXLSX,
+  onRequestClearSampleData,
 }) => {
   const todayISO = getTodayISO();
   const todayStats = computeTodayStats(state.orders, todayISO);
@@ -37,6 +45,25 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
 
   return (
     <div className="space-y-8">
+      {isAdmin && hasAnyData && onRequestClearSampleData && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E4DFD5] bg-white px-5 py-3.5">
+          <div className="text-xs text-[#57605E]">
+            {state.isSampleData
+              ? 'Hệ thống đang hiển thị dữ liệu mẫu để trải nghiệm.'
+              : 'Đang vận hành với dữ liệu thực tế của studio.'}{' '}
+            Bạn có thể xuất sao lưu Excel/JSON hoặc reset toàn bộ về 0 bất kỳ lúc nào.
+          </div>
+          <button
+            type="button"
+            onClick={onRequestClearSampleData}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63429] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#8B2920] whitespace-nowrap shrink-0"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)
+          </button>
+        </div>
+      )}
+
       {/* Row 1: Thống kê nhanh HÔM NAY + Quỹ tiền mặt */}
       <section aria-labelledby="today-summary-heading" className="grid grid-cols-1 gap-5 lg:grid-cols-12">
         {/* Card 1: Đơn hàng & Doanh thu hôm nay */}
@@ -258,14 +285,24 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
               Lợi nhuận = Tổng giá bán − Tổng giá nhập − Chi phí vận hành (chi phí dùng chung chia đều 3 nhánh; số âm hiển thị màu đỏ trong ngoặc đơn).
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onExportPnLCSV}
-            className="inline-flex items-center gap-2 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Xuất CSV Tổng hợp
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={onExportFinanceXLSX}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#166534] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#14532D] whitespace-nowrap shrink-0"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Xuất Excel Thu Chi &amp; Tổng hợp
+            </button>
+            <button
+              type="button"
+              onClick={onExportPnLCSV}
+              className="inline-flex items-center gap-2 rounded-lg border border-[#E4DFD5] bg-white px-3.5 py-2 text-xs font-medium text-[#1A1F1E] transition-colors hover:bg-[#FAF8F4] whitespace-nowrap shrink-0"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Xuất CSV Tổng hợp
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 overflow-x-auto">

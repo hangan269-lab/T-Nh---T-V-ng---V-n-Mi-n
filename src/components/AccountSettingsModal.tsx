@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { KeyRound, ShieldCheck, UserPlus, X } from 'lucide-react';
+import { Edit3, KeyRound, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
 import { UserAccount, UserRole } from '../types/erp';
 
 interface AccountSettingsModalProps {
   open: boolean;
   currentUser: UserAccount;
   accounts: UserAccount[];
+  hasSystemData?: boolean;
   onClose: () => void;
   onChangePin: (
     targetUserId: string,
@@ -18,15 +19,25 @@ interface AccountSettingsModalProps {
     role: UserRole;
     pin: string;
   }) => { ok: true } | { ok: false; error: string };
+  onUpdateAccount: (
+    targetUserId: string,
+    input: { name: string; username: string; role: UserRole; pin?: string }
+  ) => { ok: true } | { ok: false; error: string };
+  onDeleteAccount: (targetUserId: string) => { ok: true } | { ok: false; error: string };
+  onRequestResetSystem?: () => void;
 }
 
 export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   open,
   currentUser,
   accounts,
+  hasSystemData = true,
   onClose,
   onChangePin,
   onCreateAccount,
+  onUpdateAccount,
+  onDeleteAccount,
+  onRequestResetSystem,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -47,6 +58,14 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const [resetTargetId, setResetTargetId] = useState<string | null>(null);
   const [resetPinVal, setResetPinVal] = useState('');
 
+  // Admin: edit & delete account
+  const [editAccId, setEditAccId] = useState<string | null>(null);
+  const [editAccName, setEditAccName] = useState('');
+  const [editAccUsername, setEditAccUsername] = useState('');
+  const [editAccRole, setEditAccRole] = useState<UserRole>('Thành viên');
+  const [editAccPin, setEditAccPin] = useState('');
+  const [deleteAccTarget, setDeleteAccTarget] = useState<UserAccount | null>(null);
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -60,6 +79,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   if (!open) return null;
 
   const isAdmin = currentUser.role === 'Admin';
+  const adminCount = accounts.filter((a) => a.role === 'Admin').length;
 
   const handleOwnPinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,6 +129,47 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
     setResetTargetId(null);
     setResetPinVal('');
     setAccMsg({ type: 'success', text: 'Đã đặt lại mã PIN cho thành viên.' });
+  };
+
+  const openEditAccount = (acc: UserAccount) => {
+    setAccMsg(null);
+    setResetTargetId(null);
+    setDeleteAccTarget(null);
+    setEditAccId(acc.id);
+    setEditAccName(acc.name);
+    setEditAccUsername(acc.username);
+    setEditAccRole(acc.role);
+    setEditAccPin('');
+  };
+
+  const handleSaveEditAccount = (targetId: string) => {
+    setAccMsg(null);
+    const res = onUpdateAccount(targetId, {
+      name: editAccName,
+      username: editAccUsername,
+      role: editAccRole,
+      pin: editAccPin || undefined,
+    });
+    if (!res.ok) {
+      setAccMsg({ type: 'error', text: res.error });
+      return;
+    }
+    setEditAccId(null);
+    setEditAccPin('');
+    setAccMsg({ type: 'success', text: 'Đã cập nhật thông tin tài khoản thành viên.' });
+  };
+
+  const handleConfirmDeleteAccount = () => {
+    if (!deleteAccTarget) return;
+    setAccMsg(null);
+    const res = onDeleteAccount(deleteAccTarget.id);
+    if (!res.ok) {
+      setAccMsg({ type: 'error', text: res.error });
+      setDeleteAccTarget(null);
+      return;
+    }
+    setDeleteAccTarget(null);
+    setAccMsg({ type: 'success', text: 'Đã xóa tài khoản thành viên khỏi hệ thống.' });
   };
 
   return (
@@ -234,6 +295,34 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               </div>
             )}
 
+            {deleteAccTarget && (
+              <div
+                role="alertdialog"
+                aria-label="Xác nhận xóa tài khoản"
+                className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#A63429]/30 bg-[#A63429]/5 px-3.5 py-2.5 text-xs"
+              >
+                <span className="font-medium text-[#A63429]">
+                  Xác nhận xóa vĩnh viễn tài khoản <strong>{deleteAccTarget.name}</strong> ({deleteAccTarget.username})?
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteAccTarget(null)}
+                    className="rounded border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E]"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeleteAccount}
+                    className="rounded bg-[#A63429] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#8B2920]"
+                  >
+                    Xác nhận xóa
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
@@ -241,69 +330,202 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     <th className="py-2 pr-3">Thành viên</th>
                     <th className="py-2 px-3">Tên đăng nhập</th>
                     <th className="py-2 px-3">Vai trò</th>
-                    <th className="py-2 pl-3 text-right">Đặt lại mã PIN</th>
+                    <th className="py-2 pl-3 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#ECE7DD]">
-                  {accounts.map((acc) => (
-                    <tr key={acc.id}>
-                      <td className="py-2.5 pr-3 font-medium text-[#1A1F1E]">{acc.name}</td>
-                      <td className="py-2.5 px-3 font-mono text-[#57605E]">{acc.username}</td>
-                      <td className="py-2.5 px-3">
-                        <span
-                          className={
-                            acc.role === 'Admin'
-                              ? 'font-semibold text-[#0D4F43]'
-                              : 'text-[#57605E]'
-                          }
-                        >
-                          {acc.role}
-                        </span>
-                      </td>
-                      <td className="py-2.5 pl-3 text-right">
-                        {resetTargetId === acc.id ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <input
-                              type="password"
-                              aria-label={`Mã PIN mới cho ${acc.name}`}
-                              placeholder="PIN mới"
-                              value={resetPinVal}
-                              onChange={(e) => setResetPinVal(e.target.value)}
-                              className="w-24 rounded border border-[#E4DFD5] px-2 py-1 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleAdminResetPin(acc.id)}
-                              className="rounded bg-[#0D4F43] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#093B32]"
+                  {accounts.map((acc) => {
+                    const isSelf = acc.id === currentUser.id;
+                    const isLastAdmin = acc.role === 'Admin' && adminCount <= 1;
+                    const cannotDelete = isSelf || isLastAdmin;
+                    const isEditingThis = editAccId === acc.id;
+                    return (
+                      <React.Fragment key={acc.id}>
+                        <tr>
+                          <td className="py-2.5 pr-3 font-medium text-[#1A1F1E]">
+                            {acc.name}
+                            {isSelf && (
+                              <span className="ml-1.5 text-[11px] font-normal text-[#0D4F43]">
+                                (Bạn)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[#57605E]">{acc.username}</td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={
+                                acc.role === 'Admin'
+                                  ? 'font-semibold text-[#0D4F43]'
+                                  : 'text-[#57605E]'
+                              }
                             >
-                              Lưu
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setResetTargetId(null);
-                                setResetPinVal('');
-                              }}
-                              className="rounded border border-[#E4DFD5] px-2 py-1 text-xs text-[#57605E]"
-                            >
-                              Hủy
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setResetTargetId(acc.id);
-                              setResetPinVal('');
-                            }}
-                            className="rounded border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
-                          >
-                            Đổi PIN
-                          </button>
+                              {acc.role}
+                            </span>
+                          </td>
+                          <td className="py-2.5 pl-3 text-right whitespace-nowrap">
+                            {resetTargetId === acc.id ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <input
+                                  type="password"
+                                  aria-label={`Mã PIN mới cho ${acc.name}`}
+                                  placeholder="PIN mới"
+                                  value={resetPinVal}
+                                  onChange={(e) => setResetPinVal(e.target.value)}
+                                  className="w-24 rounded border border-[#E4DFD5] px-2 py-1 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdminResetPin(acc.id)}
+                                  className="rounded bg-[#0D4F43] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#093B32]"
+                                >
+                                  Lưu
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setResetTargetId(null);
+                                    setResetPinVal('');
+                                  }}
+                                  className="rounded border border-[#E4DFD5] px-2 py-1 text-xs text-[#57605E]"
+                                >
+                                  Hủy
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    isEditingThis ? setEditAccId(null) : openEditAccount(acc)
+                                  }
+                                  aria-label={`Sửa tài khoản ${acc.name}`}
+                                  className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
+                                >
+                                  <Edit3 className="h-3 w-3" />
+                                  Sửa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditAccId(null);
+                                    setResetTargetId(acc.id);
+                                    setResetPinVal('');
+                                  }}
+                                  className="rounded border border-[#E4DFD5] bg-white px-2 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
+                                >
+                                  Đổi PIN
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={cannotDelete}
+                                  onClick={() => setDeleteAccTarget(acc)}
+                                  aria-label={`Xóa tài khoản ${acc.name}`}
+                                  title={
+                                    isSelf
+                                      ? 'Không thể tự xóa tài khoản đang đăng nhập'
+                                      : isLastAdmin
+                                        ? 'Cần giữ ít nhất 1 Admin'
+                                        : `Xóa tài khoản ${acc.name}`
+                                  }
+                                  className="rounded border border-[#E4DFD5] bg-white p-1 text-[#A63429] hover:border-[#A63429]/40 hover:bg-[#A63429]/5 disabled:opacity-30"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+
+                        {isEditingThis && (
+                          <tr className="bg-[#FAF8F4]">
+                            <td colSpan={4} className="px-3 py-3">
+                              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-4 sm:items-end">
+                                <div>
+                                  <label
+                                    htmlFor={`edit-acc-name-${acc.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Tên hiển thị
+                                  </label>
+                                  <input
+                                    id={`edit-acc-name-${acc.id}`}
+                                    type="text"
+                                    value={editAccName}
+                                    onChange={(e) => setEditAccName(e.target.value)}
+                                    className="mt-1 w-full rounded border border-[#E4DFD5] bg-white px-2 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    htmlFor={`edit-acc-user-${acc.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Tên đăng nhập
+                                  </label>
+                                  <input
+                                    id={`edit-acc-user-${acc.id}`}
+                                    type="text"
+                                    value={editAccUsername}
+                                    onChange={(e) => setEditAccUsername(e.target.value)}
+                                    className="mt-1 w-full rounded border border-[#E4DFD5] bg-white px-2 py-1.5 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label
+                                    htmlFor={`edit-acc-role-${acc.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    Vai trò
+                                  </label>
+                                  <select
+                                    id={`edit-acc-role-${acc.id}`}
+                                    value={editAccRole}
+                                    onChange={(e) => setEditAccRole(e.target.value as UserRole)}
+                                    className="mt-1 w-full rounded border border-[#E4DFD5] bg-white px-2 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  >
+                                    <option value="Thành viên">Thành viên</option>
+                                    <option value="Admin">Admin</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label
+                                    htmlFor={`edit-acc-pin-${acc.id}`}
+                                    className="block text-[11px] font-medium text-[#57605E]"
+                                  >
+                                    PIN mới (tùy chọn)
+                                  </label>
+                                  <input
+                                    id={`edit-acc-pin-${acc.id}`}
+                                    type="password"
+                                    placeholder="Giữ nguyên nếu trống"
+                                    value={editAccPin}
+                                    onChange={(e) => setEditAccPin(e.target.value)}
+                                    className="mt-1 w-full rounded border border-[#E4DFD5] bg-white px-2 py-1.5 font-mono text-xs focus:border-[#0D4F43] focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              <div className="mt-2.5 flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditAccId(null)}
+                                  className="rounded border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#57605E]"
+                                >
+                                  Hủy
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveEditAccount(acc.id)}
+                                  className="rounded bg-[#0D4F43] px-3 py-1 text-xs font-medium text-white hover:bg-[#093B32]"
+                                >
+                                  Lưu tài khoản
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                    </tr>
-                  ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -383,6 +605,32 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 </button>
               </div>
             </form>
+
+            {onRequestResetSystem && hasSystemData && (
+              <div className="mt-6 border-t border-[#ECE7DD] pt-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#A63429]/25 bg-[#A63429]/[0.04] p-4">
+                  <div>
+                    <div className="text-xs font-semibold text-[#A63429]">
+                      Dữ liệu hệ thống &amp; Dữ liệu mẫu
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-[#57605E]">
+                      Xóa sạch toàn bộ đơn hàng, tồn kho, cổ đông, chi phí, dự trù về 0 để bắt đầu nhập liệu thực tế (giữ nguyên tài khoản team).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onRequestResetSystem();
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#A63429] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#8B2920] whitespace-nowrap shrink-0"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)
+                  </button>
+                </div>
+              </div>
+            )}
           </section>
         )}
       </div>

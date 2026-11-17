@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Clock, Edit3, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Clock, Edit3, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react';
 import {
   ALL_BRANDS,
   AppState,
@@ -18,6 +18,7 @@ import {
   formatVND,
   getTodayISO,
 } from '../utils/finance';
+import { ConfirmModal } from './ConfirmModal';
 
 interface FinanceTabProps {
   state: AppState;
@@ -32,6 +33,7 @@ interface FinanceTabProps {
   onUpdateExpense: (id: string, patch: ExpenseUpdatePatch) => void;
   onToggleExpenseStatus: (id: string) => void;
   onDeleteExpense: (id: string) => void;
+  onExportFinanceXLSX: () => void;
 }
 
 export const FinanceTab: React.FC<FinanceTabProps> = ({
@@ -44,6 +46,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   onUpdateExpense,
   onToggleExpenseStatus,
   onDeleteExpense,
+  onExportFinanceXLSX,
 }) => {
   const isAdmin = currentUser.role === 'Admin';
   const fund = computeFundSummary(state.shareholders, state.expenses);
@@ -57,6 +60,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [editShName, setEditShName] = useState('');
   const [editShContribution, setEditShContribution] = useState('');
   const [editShNote, setEditShNote] = useState('');
+  const [deleteShareholderTarget, setDeleteShareholderTarget] = useState<Shareholder | null>(null);
 
   // Expense form
   const [expDate, setExpDate] = useState(getTodayISO());
@@ -68,7 +72,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [expReceipt, setExpReceipt] = useState('');
   const [expStatus, setExpStatus] = useState<ExpenseStatus>(ExpenseStatus.PENDING);
 
-  // Expense inline edit
+  // Expense inline edit & delete confirmation
   const [editingExpId, setEditingExpId] = useState<string | null>(null);
   const [editExpDate, setEditExpDate] = useState('');
   const [editExpCategory, setEditExpCategory] = useState('');
@@ -77,6 +81,8 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   const [editExpAmount, setEditExpAmount] = useState('');
   const [editExpPaidBy, setEditExpPaidBy] = useState('');
   const [editExpReceipt, setEditExpReceipt] = useState('');
+  const [editExpStatus, setEditExpStatus] = useState<ExpenseStatus>(ExpenseStatus.PENDING);
+  const [deleteExpenseTarget, setDeleteExpenseTarget] = useState<Expense | null>(null);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<'all' | ExpenseStatus>('all');
@@ -151,6 +157,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
     setEditExpAmount(String(exp.amount));
     setEditExpPaidBy(exp.paidBy);
     setEditExpReceipt(exp.receiptNote || '');
+    setEditExpStatus(exp.status);
   };
 
   const saveEditExpense = (id: string) => {
@@ -164,6 +171,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
       amount: Math.round(amount),
       paidBy: editExpPaidBy,
       receiptNote: editExpReceipt.trim(),
+      status: editExpStatus,
     });
     setEditingExpId(null);
   };
@@ -347,7 +355,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                           {isAdmin && (
                             <button
                               type="button"
-                              onClick={() => onDeleteShareholder(sh.id)}
+                              onClick={() => setDeleteShareholderTarget(sh)}
                               aria-label={`Xóa vĩnh viễn cổ đông ${sh.name}`}
                               className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
                             >
@@ -449,14 +457,24 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
 
       {/* Form thêm khoản chi + Sổ chi tiết các khoản chi */}
       <section aria-labelledby="expenses-heading" className="rounded-xl border border-[#E4DFD5] bg-white p-6">
-        <div className="border-b border-[#ECE7DD] pb-4">
-          <h2 id="expenses-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
-            Sổ chi tiết các khoản chi vận hành
-          </h2>
-          <p className="mt-0.5 text-xs text-[#57605E]">
-            Nhấn Tình trạng để đổi nhanh "Chưa" / "Hoàn thiện". Mọi thao tác sửa đều lưu vết cũ → mới trong Lịch sử thao tác.
-            {!isAdmin && ' (Chỉ Admin mới có quyền xóa vĩnh viễn giao dịch tài chính.)'}
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#ECE7DD] pb-4">
+          <div>
+            <h2 id="expenses-heading" className="font-serif text-xl font-semibold text-[#1A1F1E]">
+              Sổ chi tiết các khoản chi vận hành
+            </h2>
+            <p className="mt-0.5 text-xs text-[#57605E]">
+              Nhấn Tình trạng để đổi nhanh "Chưa" / "Hoàn thiện". Mọi thao tác sửa đều lưu vết cũ → mới trong Lịch sử thao tác.
+              {!isAdmin && ' (Chỉ Admin mới có quyền xóa vĩnh viễn giao dịch tài chính.)'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onExportFinanceXLSX}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#166534] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#14532D] whitespace-nowrap shrink-0"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Xuất Excel Thu Chi &amp; Tổng hợp
+          </button>
         </div>
 
         {/* Form thêm khoản chi */}
@@ -740,7 +758,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                             {isAdmin && (
                               <button
                                 type="button"
-                                onClick={() => onDeleteExpense(exp.id)}
+                                onClick={() => setDeleteExpenseTarget(exp)}
                                 aria-label={`Xóa vĩnh viễn khoản chi ${exp.detail}`}
                                 className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
                               >
@@ -871,7 +889,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                                 </select>
                               </div>
 
-                              <div className="lg:col-span-3">
+                              <div className="lg:col-span-2">
                                 <label
                                   htmlFor={`edit-exp-receipt-${exp.id}`}
                                   className="block text-xs font-medium text-[#57605E]"
@@ -885,6 +903,24 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
                                   onChange={(e) => setEditExpReceipt(e.target.value)}
                                   className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
                                 />
+                              </div>
+
+                              <div>
+                                <label
+                                  htmlFor={`edit-exp-status-${exp.id}`}
+                                  className="block text-xs font-medium text-[#57605E]"
+                                >
+                                  Tình trạng
+                                </label>
+                                <select
+                                  id={`edit-exp-status-${exp.id}`}
+                                  value={editExpStatus}
+                                  onChange={(e) => setEditExpStatus(e.target.value as ExpenseStatus)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                >
+                                  <option value={ExpenseStatus.PENDING}>Chưa</option>
+                                  <option value={ExpenseStatus.COMPLETED}>Hoàn thiện</option>
+                                </select>
                               </div>
 
                               <div className="lg:col-span-2 flex items-center justify-end gap-2">
@@ -915,6 +951,34 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
           </div>
         )}
       </section>
+
+      <ConfirmModal
+        open={Boolean(deleteShareholderTarget)}
+        title={`Xác nhận xóa cổ đông ${deleteShareholderTarget?.name ?? ''}?`}
+        description={`Bạn có chắc muốn xóa cổ đông "${deleteShareholderTarget?.name ?? ''}" (Vốn góp: ${formatVND(deleteShareholderTarget?.contribution ?? 0)})? Tổng vốn góp và Số dư quỹ hiện tại sẽ được tự động tính lại.`}
+        confirmLabel="Xóa cổ đông"
+        onConfirm={() => {
+          if (deleteShareholderTarget) {
+            onDeleteShareholder(deleteShareholderTarget.id);
+            setDeleteShareholderTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteShareholderTarget(null)}
+      />
+
+      <ConfirmModal
+        open={Boolean(deleteExpenseTarget)}
+        title="Xác nhận xóa khoản chi?"
+        description={`Bạn có chắc muốn xóa vĩnh viễn khoản chi "${deleteExpenseTarget?.detail ?? ''}" (${formatVND(deleteExpenseTarget?.amount ?? 0)})? Số dư Quỹ và P&L sẽ được tự động cập nhật lại.`}
+        confirmLabel="Xóa khoản chi"
+        onConfirm={() => {
+          if (deleteExpenseTarget) {
+            onDeleteExpense(deleteExpenseTarget.id);
+            setDeleteExpenseTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteExpenseTarget(null)}
+      />
     </div>
   );
 };

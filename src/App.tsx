@@ -40,9 +40,11 @@ import {
 } from './types/erp';
 import {
   ActorIdentity,
+  addBudgetItemWithAudit,
   addExpenseWithAudit,
   addShareholderWithAudit,
   addStockImportWithAudit,
+  archiveProductWithAudit,
   authenticateUser,
   cancelOrder,
   changeUserPinWithAudit,
@@ -50,8 +52,13 @@ import {
   confirmOrderPayment,
   createOrderWithValidation,
   createUserAccountWithAudit,
+  deleteBudgetItemWithAudit,
   deleteExpenseWithAudit,
+  deleteOrderWithAudit,
+  deleteProductWithAudit,
   deleteShareholderWithAudit,
+  deleteStockImportWithAudit,
+  deleteUserAccountWithAudit,
   ExpenseUpdatePatch,
   exportOrdersToCSV,
   exportPnLToCSV,
@@ -63,12 +70,18 @@ import {
   OrderDraftInput,
   OrderShippingUpdate,
   parseImportedJSON,
-  saveProductWithAudit,
+  SaveProductInput,
+  saveProductWithValidation,
   toggleExpenseStatus,
+  updateBudgetItemWithAudit,
   updateExpenseWithAudit,
   updateOrderShipping,
+  updateOrderWithValidation,
   updateShareholderWithAudit,
+  updateStockImportWithValidation,
+  updateUserAccountWithAudit,
 } from './utils/finance';
+import { downloadFinanceXLSX, downloadOrdersXLSX } from './utils/excelExport';
 
 type TabId = 'dashboard' | 'orders' | 'inventory' | 'finance' | 'budget' | 'audit';
 
@@ -262,6 +275,29 @@ export default function App() {
     return { ok: true };
   };
 
+  const handleUpdateOrder = (
+    orderId: string,
+    draft: OrderDraftInput
+  ): { ok: true } | { ok: false; error: string } => {
+    const result = updateOrderWithValidation(state, orderId, draft, actor);
+    if (!result.ok) {
+      return result;
+    }
+    setState(result.state);
+    showNotice(
+      `Đã cập nhật đơn hàng ${result.order.code}, tự động cân đối lại tồn kho và cước vận chuyển.`
+    );
+    return { ok: true };
+  };
+
+  const handleDeleteOrder = (orderId: string) => {
+    const target = state.orders.find((o) => o.id === orderId);
+    setState((prev) => deleteOrderWithAudit(prev, orderId, actor));
+    showNotice(
+      `Đã xóa đơn hàng ${target?.code ?? ''}, tự động hoàn lại tồn kho, doanh thu và cước VC liên kết.`
+    );
+  };
+
   const handleConfirmPayment = (orderId: string) => {
     setState((prev) => confirmOrderPayment(prev, orderId, actor));
     showNotice(`Đã xác nhận thanh toán bởi ${actor.name} (COD cập nhật về 0 đ).`);
@@ -302,13 +338,48 @@ export default function App() {
     showNotice(`Đã xuất ${ordersToExport.length} đơn hàng ra file CSV chuẩn Viettel Post.`);
   };
 
-  const handleSaveProduct = (productInput: Omit<Product, 'id'> & { id?: string }) => {
-    setState((prev) => saveProductWithAudit(prev, productInput, actor));
+  const handleSaveProduct = (
+    productInput: SaveProductInput
+  ): { ok: true; hasStockAdjustment?: boolean } | { ok: false; error: string } => {
+    const res = saveProductWithValidation(state, productInput, actor);
+    if (!res.ok) {
+      return res;
+    }
+    setState(res.state);
+    if (productInput.id) {
+      showNotice(
+        res.hasStockAdjustment
+          ? 'Đã cập nhật mẫu sản phẩm, điều chỉnh tồn kho và lưu nhật ký chỉnh sửa.'
+          : 'Đã cập nhật thông tin mẫu sản phẩm và lưu nhật ký chỉnh sửa.'
+      );
+    } else {
+      showNotice(`Đã thêm mẫu sản phẩm mới ${res.product.code} (${res.product.name}).`);
+    }
+    return { ok: true, hasStockAdjustment: res.hasStockAdjustment };
+  };
+
+  const handleArchiveProduct = (productId: string, archive: boolean) => {
+    const res = archiveProductWithAudit(state, productId, archive, actor);
+    if (!res.ok) {
+      showNotice(res.error, 'error');
+      return;
+    }
+    setState(res.state);
     showNotice(
-      productInput.id
-        ? 'Đã cập nhật thông tin mẫu sản phẩm và lưu nhật ký chỉnh sửa.'
-        : 'Đã thêm mẫu sản phẩm mới.'
+      archive
+        ? 'Đã chuyển mẫu sang Ngừng kinh doanh (ẩn khỏi đơn mới, giữ nguyên số liệu báo cáo cũ).'
+        : 'Đã mở bán lại mẫu sản phẩm.'
     );
+  };
+
+  const handleDeleteProduct = (productId: string) => {
+    const res = deleteProductWithAudit(state, productId, actor);
+    if (!res.ok) {
+      showNotice(res.error, 'error');
+      return;
+    }
+    setState(res.state);
+    showNotice('Đã xóa mẫu sản phẩm khỏi danh mục kho hàng.');
   };
 
   const handleAddStockImport = (
@@ -317,6 +388,22 @@ export default function App() {
   ) => {
     setState((prev) => addStockImportWithAudit(prev, imp, alsoRecordCashExpense, actor));
     showNotice(`Đã nhập kho mới (${actor.name}) và cập nhật Tổng giá nhập.`);
+  };
+
+  const handleUpdateStockImport = (
+    importId: string,
+    patch: Omit<StockImport, 'id' | 'enteredBy'>
+  ): { ok: true } | { ok: false; error: string } => {
+    const res = updateStockImportWithValidation(state, importId, patch, actor);
+    if (!res.ok) return res;
+    setState(res.state);
+    showNotice('Đã cập nhật phiếu nhập kho, tồn kho và Tổng giá nhập.');
+    return { ok: true };
+  };
+
+  const handleDeleteStockImport = (importId: string) => {
+    setState((prev) => deleteStockImportWithAudit(prev, importId, actor));
+    showNotice('Đã xóa phiếu nhập kho và tự động cân đối lại tồn kho, Tổng giá nhập.');
   };
 
   const handleAddShareholder = (sh: Omit<Shareholder, 'id'>) => {
@@ -389,22 +476,38 @@ export default function App() {
     return { ok: true };
   };
 
+  const handleUpdateAccount = (
+    targetUserId: string,
+    input: { name: string; username: string; role: UserRole; pin?: string }
+  ): { ok: true } | { ok: false; error: string } => {
+    const res = updateUserAccountWithAudit(state, targetUserId, input, actor);
+    if (!res.ok) return res;
+    setState(res.state);
+    return { ok: true };
+  };
+
+  const handleDeleteAccount = (
+    targetUserId: string
+  ): { ok: true } | { ok: false; error: string } => {
+    const res = deleteUserAccountWithAudit(state, targetUserId, actor);
+    if (!res.ok) return res;
+    setState(res.state);
+    return { ok: true };
+  };
+
   const handleAddBudgetItem = (item: Omit<BudgetItem, 'id'>) => {
-    setState((prev) => ({
-      ...prev,
-      budgetItems: [
-        ...prev.budgetItems,
-        { ...item, id: `bdg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` },
-      ],
-    }));
+    setState((prev) => addBudgetItemWithAudit(prev, item, actor));
     showNotice('Đã thêm hạng mục dự trù ngân sách.');
   };
 
+  const handleUpdateBudgetItem = (id: string, patch: Omit<BudgetItem, 'id'>) => {
+    setState((prev) => updateBudgetItemWithAudit(prev, id, patch, actor));
+    showNotice('Đã cập nhật hạng mục dự trù ngân sách.');
+  };
+
   const handleDeleteBudgetItem = (id: string) => {
-    setState((prev) => ({
-      ...prev,
-      budgetItems: prev.budgetItems.filter((b) => b.id !== id),
-    }));
+    setState((prev) => deleteBudgetItemWithAudit(prev, id, actor));
+    showNotice('Đã xóa hạng mục dự trù ngân sách.');
   };
 
   const handleExportJSON = () => {
@@ -425,6 +528,16 @@ export default function App() {
       'text/csv;charset=utf-8'
     );
     showNotice('Đã xuất danh sách đơn hàng ra file CSV.');
+  };
+
+  const handleExportOrdersXLSX = (ordersToExport: Order[]) => {
+    const filename = downloadOrdersXLSX(ordersToExport, getTodayISO());
+    showNotice(`Đã xuất ${ordersToExport.length} đơn hàng ra file Excel (${filename}).`);
+  };
+
+  const handleExportFinanceXLSX = () => {
+    const filename = downloadFinanceXLSX(state, getTodayISO());
+    showNotice(`Đã xuất Báo cáo Tài chính Thu Chi & Tổng hợp ra file Excel (${filename}).`);
   };
 
   const handleExportPnLCSV = () => {
@@ -484,6 +597,13 @@ export default function App() {
 
   const activeNav = NAV_ITEMS.find((n) => n.id === activeTab) ?? NAV_ITEMS[0];
   const todayISO = getTodayISO();
+  const hasAnyData =
+    state.products.length > 0 ||
+    state.orders.length > 0 ||
+    state.expenses.length > 0 ||
+    state.shareholders.length > 0 ||
+    state.stockImports.length > 0 ||
+    state.budgetItems.length > 0;
 
   const renderSidebarContent = () => (
     <div className="flex h-full flex-col justify-between bg-[#FFFFFF] border-r border-[#E4DFD5] p-5">
@@ -512,7 +632,7 @@ export default function App() {
                   setActiveTab(item.id);
                   setMobileMenuOpen(false);
                 }}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left ${
                   isActive
                     ? 'bg-[#0D4F43] text-white'
                     : 'text-[#1A1F1E] hover:bg-[#FAF8F4]'
@@ -573,14 +693,14 @@ export default function App() {
         </button>
 
         {currentUser.role === 'Admin' &&
-          (state.products.length > 0 || state.orders.length > 0 || state.expenses.length > 0 ? (
+          (hasAnyData ? (
             <button
               type="button"
               onClick={() => setConfirmClearOpen(true)}
               className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#A63429]/25 bg-white px-3 py-2 text-xs font-medium text-[#A63429] transition-colors hover:bg-[#A63429]/5 whitespace-nowrap"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              Xóa dữ liệu mẫu
+              Reset dữ liệu về 0
             </button>
           ) : (
             <button
@@ -742,9 +862,13 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <DashboardTab
               state={state}
+              isAdmin={currentUser.role === 'Admin'}
+              hasAnyData={hasAnyData}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onConfirmPayment={handleConfirmPayment}
               onExportPnLCSV={handleExportPnLCSV}
+              onExportFinanceXLSX={handleExportFinanceXLSX}
+              onRequestClearSampleData={() => setConfirmClearOpen(true)}
             />
           )}
 
@@ -756,11 +880,14 @@ export default function App() {
               onOpenCreate={() => setIsOrderCreateOpen(true)}
               onCloseCreate={() => setIsOrderCreateOpen(false)}
               onCreateOrder={handleCreateOrder}
+              onUpdateOrder={handleUpdateOrder}
+              onDeleteOrder={handleDeleteOrder}
               onConfirmPayment={handleConfirmPayment}
               onCancelOrder={handleCancelOrder}
               onUpdateOrderShipping={handleUpdateOrderShipping}
               onMarkOrdersShippingStatus={handleMarkOrdersShippingStatus}
               onExportOrdersCSV={handleExportOrdersCSV}
+              onExportOrdersXLSX={handleExportOrdersXLSX}
               onExportViettelPostCSV={handleExportViettelPostCSV}
             />
           )}
@@ -770,7 +897,11 @@ export default function App() {
               state={state}
               currentUser={currentUser}
               onSaveProduct={handleSaveProduct}
+              onArchiveProduct={handleArchiveProduct}
+              onDeleteProduct={handleDeleteProduct}
               onAddStockImport={handleAddStockImport}
+              onUpdateStockImport={handleUpdateStockImport}
+              onDeleteStockImport={handleDeleteStockImport}
             />
           )}
 
@@ -785,6 +916,7 @@ export default function App() {
               onUpdateExpense={handleUpdateExpense}
               onToggleExpenseStatus={handleToggleExpenseStatus}
               onDeleteExpense={handleDeleteExpense}
+              onExportFinanceXLSX={handleExportFinanceXLSX}
             />
           )}
 
@@ -792,6 +924,7 @@ export default function App() {
             <BudgetTab
               state={state}
               onAddBudgetItem={handleAddBudgetItem}
+              onUpdateBudgetItem={handleUpdateBudgetItem}
               onDeleteBudgetItem={handleDeleteBudgetItem}
             />
           )}
@@ -802,9 +935,9 @@ export default function App() {
 
       <ConfirmModal
         open={confirmClearOpen}
-        title="Xóa toàn bộ dữ liệu mẫu?"
-        description="Hành động này sẽ xóa sạch danh mục mẫu, đơn hàng, tồn kho, cổ đông, chi phí, dự trù và nhật ký hiện tại (giữ nguyên tài khoản team) để bạn bắt đầu nhập liệu thực tế."
-        confirmLabel="Xóa toàn bộ dữ liệu"
+        title="Xóa toàn bộ dữ liệu mẫu (Reset hệ thống về 0)?"
+        description="Hành động này sẽ xóa sạch toàn bộ đơn hàng, tồn kho, danh mục mẫu, phiếu nhập kho, cổ đông, chi phí, dự trù và nhật ký hiện tại (giữ nguyên tài khoản thành viên) để đặt lại Dashboard, P&L và Quỹ tiền mặt về 0."
+        confirmLabel="Xác nhận Reset về 0"
         onConfirm={handleClearSampleData}
         onCancel={() => setConfirmClearOpen(false)}
       />
@@ -813,9 +946,13 @@ export default function App() {
         open={settingsOpen}
         currentUser={currentUser}
         accounts={state.accounts}
+        hasSystemData={hasAnyData}
         onClose={() => setSettingsOpen(false)}
         onChangePin={handleChangePin}
         onCreateAccount={handleCreateAccount}
+        onUpdateAccount={handleUpdateAccount}
+        onDeleteAccount={handleDeleteAccount}
+        onRequestResetSystem={() => setConfirmClearOpen(true)}
       />
     </div>
   );

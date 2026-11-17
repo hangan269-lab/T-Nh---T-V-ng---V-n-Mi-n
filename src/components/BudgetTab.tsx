@@ -1,21 +1,24 @@
 import React, { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Edit3, Plus, Trash2 } from 'lucide-react';
 import { AppState, BudgetItem, EXPENSE_CATEGORIES } from '../types/erp';
 import {
   computeBudgetSummary,
   computeFundSummary,
   formatVND,
 } from '../utils/finance';
+import { ConfirmModal } from './ConfirmModal';
 
 interface BudgetTabProps {
   state: AppState;
   onAddBudgetItem: (item: Omit<BudgetItem, 'id'>) => void;
+  onUpdateBudgetItem: (id: string, patch: Omit<BudgetItem, 'id'>) => void;
   onDeleteBudgetItem: (id: string) => void;
 }
 
 export const BudgetTab: React.FC<BudgetTabProps> = ({
   state,
   onAddBudgetItem,
+  onUpdateBudgetItem,
   onDeleteBudgetItem,
 }) => {
   const fund = computeFundSummary(state.shareholders, state.expenses);
@@ -25,6 +28,14 @@ export const BudgetTab: React.FC<BudgetTabProps> = ({
   const [detail, setDetail] = useState('');
   const [quantity, setQuantity] = useState('1');
   const [unitPrice, setUnitPrice] = useState('');
+
+  // Inline edit & delete confirmation
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editCategory, setEditCategory] = useState<string>(EXPENSE_CATEGORIES[0]);
+  const [editDetail, setEditDetail] = useState('');
+  const [editQty, setEditQty] = useState('1');
+  const [editPrice, setEditPrice] = useState('0');
+  const [deleteTarget, setDeleteTarget] = useState<BudgetItem | null>(null);
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +53,29 @@ export const BudgetTab: React.FC<BudgetTabProps> = ({
     setDetail('');
     setQuantity('1');
     setUnitPrice('');
+  };
+
+  const openEdit = (item: BudgetItem) => {
+    setEditingId(item.id);
+    setEditCategory(item.category);
+    setEditDetail(item.detail);
+    setEditQty(String(item.quantity));
+    setEditPrice(String(item.estimatedUnitPrice));
+  };
+
+  const saveEdit = (id: string) => {
+    const qty = Number(editQty);
+    const price = Number(editPrice);
+    if (!editDetail.trim() || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price < 0) {
+      return;
+    }
+    onUpdateBudgetItem(id, {
+      category: editCategory,
+      detail: editDetail.trim(),
+      quantity: qty,
+      estimatedUnitPrice: Math.round(price),
+    });
+    setEditingId(null);
   };
 
   const isShortfall = budget.balanceDifference < 0;
@@ -201,36 +235,147 @@ export const BudgetTab: React.FC<BudgetTabProps> = ({
                   <th className="py-3 px-3 text-right">Số lượng</th>
                   <th className="py-3 px-3 text-right">Đơn giá dự kiến</th>
                   <th className="py-3 px-3 text-right">Thành tiền</th>
-                  <th className="py-3 pl-3 text-right">Xóa</th>
+                  <th className="py-3 pl-3 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#ECE7DD]">
                 {state.budgetItems.map((item) => {
                   const subtotal = item.quantity * item.estimatedUnitPrice;
+                  const isEditing = editingId === item.id;
                   return (
-                    <tr key={item.id} className="hover:bg-[#FAF8F4]">
-                      <td className="py-3 pr-3 font-medium text-[#1A1F1E]">{item.category}</td>
-                      <td className="py-3 px-3 text-[#1A1F1E]">{item.detail}</td>
-                      <td className="py-3 px-3 text-right font-mono text-[#57605E] tabular-nums">
-                        {item.quantity}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono text-[#57605E] tabular-nums whitespace-nowrap">
-                        {formatVND(item.estimatedUnitPrice)}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums whitespace-nowrap">
-                        {formatVND(subtotal)}
-                      </td>
-                      <td className="py-3 pl-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => onDeleteBudgetItem(item.id)}
-                          aria-label={`Xóa hạng mục ${item.detail}`}
-                          className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </td>
-                    </tr>
+                    <React.Fragment key={item.id}>
+                      <tr className="hover:bg-[#FAF8F4]">
+                        <td className="py-3 pr-3 font-medium text-[#1A1F1E]">{item.category}</td>
+                        <td className="py-3 px-3 text-[#1A1F1E]">{item.detail}</td>
+                        <td className="py-3 px-3 text-right font-mono text-[#57605E] tabular-nums">
+                          {item.quantity}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-[#57605E] tabular-nums whitespace-nowrap">
+                          {formatVND(item.estimatedUnitPrice)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-[#1A1F1E] tabular-nums whitespace-nowrap">
+                          {formatVND(subtotal)}
+                        </td>
+                        <td className="py-3 pl-3 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => (isEditing ? setEditingId(null) : openEdit(item))}
+                              aria-label={`Sửa hạng mục ${item.detail}`}
+                              className="inline-flex items-center gap-1 rounded border border-[#E4DFD5] bg-white px-2.5 py-1 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4]"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              Sửa
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(item)}
+                              aria-label={`Xóa hạng mục ${item.detail}`}
+                              className="rounded p-1.5 text-[#57605E] hover:bg-[#A63429]/10 hover:text-[#A63429]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {isEditing && (
+                        <tr className="bg-[#FAF8F4]">
+                          <td colSpan={6} className="px-4 py-3">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-12 sm:items-end">
+                              <div className="sm:col-span-3">
+                                <label
+                                  htmlFor={`edit-bdg-cat-${item.id}`}
+                                  className="block text-[11px] font-medium text-[#57605E]"
+                                >
+                                  Hạng mục
+                                </label>
+                                <select
+                                  id={`edit-bdg-cat-${item.id}`}
+                                  value={editCategory}
+                                  onChange={(e) => setEditCategory(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                >
+                                  {EXPENSE_CATEGORIES.map((c) => (
+                                    <option key={c} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="sm:col-span-4">
+                                <label
+                                  htmlFor={`edit-bdg-detail-${item.id}`}
+                                  className="block text-[11px] font-medium text-[#57605E]"
+                                >
+                                  Chi tiết dự trù
+                                </label>
+                                <input
+                                  id={`edit-bdg-detail-${item.id}`}
+                                  type="text"
+                                  value={editDetail}
+                                  onChange={(e) => setEditDetail(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-1">
+                                <label
+                                  htmlFor={`edit-bdg-qty-${item.id}`}
+                                  className="block text-[11px] font-medium text-[#57605E]"
+                                >
+                                  SL
+                                </label>
+                                <input
+                                  id={`edit-bdg-qty-${item.id}`}
+                                  type="number"
+                                  min={1}
+                                  value={editQty}
+                                  onChange={(e) => setEditQty(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label
+                                  htmlFor={`edit-bdg-price-${item.id}`}
+                                  className="block text-[11px] font-medium text-[#57605E]"
+                                >
+                                  Đơn giá dự kiến
+                                </label>
+                                <input
+                                  id={`edit-bdg-price-${item.id}`}
+                                  type="number"
+                                  min={0}
+                                  step={1000}
+                                  value={editPrice}
+                                  onChange={(e) => setEditPrice(e.target.value)}
+                                  className="mt-1 w-full rounded-lg border border-[#E4DFD5] bg-white px-2 py-1.5 font-mono text-xs tabular-nums focus:border-[#0D4F43] focus:outline-none"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2 flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingId(null)}
+                                  className="rounded-lg border border-[#E4DFD5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#57605E] hover:bg-[#F3EFE6]"
+                                >
+                                  Hủy
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => saveEdit(item.id)}
+                                  className="rounded-lg bg-[#0D4F43] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#093B32] whitespace-nowrap"
+                                >
+                                  Lưu
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -249,6 +394,20 @@ export const BudgetTab: React.FC<BudgetTabProps> = ({
           </div>
         )}
       </section>
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Xác nhận xóa hạng mục dự trù?"
+        description={`Bạn có chắc muốn xóa hạng mục "${deleteTarget?.detail ?? ''}" (${formatVND((deleteTarget?.quantity ?? 0) * (deleteTarget?.estimatedUnitPrice ?? 0))}) khỏi kế hoạch dự trù không?`}
+        confirmLabel="Xóa hạng mục"
+        onConfirm={() => {
+          if (deleteTarget) {
+            onDeleteBudgetItem(deleteTarget.id);
+            setDeleteTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };
