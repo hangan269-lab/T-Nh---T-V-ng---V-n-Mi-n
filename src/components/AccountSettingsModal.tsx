@@ -1,7 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Edit3, KeyRound, RotateCcw, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
+import {
+  Crown,
+  Edit3,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Flower,
+  Gem,
+  KeyRound,
+  Leaf,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Star,
+  Trash2,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import { getDefaultPinForAccount } from '../data/seedData';
 import { UserAccount, UserRole } from '../types/erp';
+import {
+  getGeminiApiKey,
+  getGeminiKeySource,
+  saveGeminiApiKey,
+  testGeminiConnection,
+} from '../utils/gemini';
 
 interface AccountSettingsModalProps {
   open: boolean;
@@ -26,6 +49,8 @@ interface AccountSettingsModalProps {
   ) => { ok: true } | { ok: false; error: string };
   onDeleteAccount: (targetUserId: string) => { ok: true } | { ok: false; error: string };
   onRequestResetSystem?: () => void;
+  appIcon?: string;
+  onChangeAppIcon?: (icon: string) => void;
 }
 
 export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
@@ -39,8 +64,17 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   onUpdateAccount,
   onDeleteAccount,
   onRequestResetSystem,
+  appIcon = 'Sparkles',
+  onChangeAppIcon,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
+
+  // Gemini API Key config
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [keySource, setKeySource] = useState<'custom' | 'env' | 'none'>('none');
+  const [apiTesting, setApiTesting] = useState(false);
+  const [apiMsg, setApiMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Change own PIN
   const [currentPin, setCurrentPin] = useState('');
@@ -68,6 +102,15 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const [deleteAccTarget, setDeleteAccTarget] = useState<UserAccount | null>(null);
 
   useEffect(() => {
+    if (open) {
+      const currentKey = getGeminiApiKey();
+      setApiKeyInput(currentKey);
+      setKeySource(getGeminiKeySource());
+      setApiMsg(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (open && !dialog.open) {
@@ -81,6 +124,31 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
 
   const isAdmin = currentUser.role === 'Admin';
   const adminCount = accounts.filter((a) => a.role === 'Admin').length;
+
+  const handleSaveApiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    setApiMsg(null);
+    saveGeminiApiKey(apiKeyInput.trim());
+    setKeySource(getGeminiKeySource());
+    setApiMsg({
+      type: 'success',
+      text: apiKeyInput.trim()
+        ? 'Đã lưu Gemini API Key thành công vào trình duyệt của bạn.'
+        : 'Đã xóa API Key lưu tạm. Hệ thống sẽ dùng biến môi trường (nếu có).',
+    });
+  };
+
+  const handleTestApiKey = async () => {
+    setApiMsg(null);
+    setApiTesting(true);
+    const result = await testGeminiConnection(apiKeyInput.trim() || undefined);
+    setApiTesting(false);
+    if (result.ok) {
+      setApiMsg({ type: 'success', text: result.message });
+    } else {
+      setApiMsg({ type: 'error', text: result.error });
+    }
+  };
 
   const handleOwnPinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -297,7 +365,169 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
           </form>
         </section>
 
-        {/* Section 2: Quản lý tài khoản (Admin only) */}
+        {/* Section 2: Tùy chỉnh Icon & Cấu hình Gemini API (Admin only) */}
+        {isAdmin && (
+          <>
+            {/* 2A: Icon đại diện cho app */}
+            {onChangeAppIcon && (
+              <section className="mt-6 border-t border-[#ECE7DD] pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">
+                      <Sparkles className="h-4 w-4 text-[#0D4F43]" />
+                      Biểu tượng đại diện ứng dụng
+                    </h3>
+                    <p className="mt-0.5 text-xs text-[#57605E]">
+                      Chọn biểu tượng đồng bộ với tiêu đề thanh điều hướng của xưởng.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    { id: 'Sparkles', label: 'Tia sáng', icon: Sparkles },
+                    { id: 'Flower', label: 'Bông hoa', icon: Flower },
+                    { id: 'Crown', label: 'Vương miện', icon: Crown },
+                    { id: 'Gem', label: 'Viên ngọc', icon: Gem },
+                    { id: 'Leaf', label: 'Chiếc lá', icon: Leaf },
+                    { id: 'Star', label: 'Ngôi sao', icon: Star },
+                  ].map((item) => {
+                    const IconComp = item.icon;
+                    const isSelected = (appIcon || 'Sparkles') === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => onChangeAppIcon(item.id)}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all ${
+                          isSelected
+                            ? 'border-[#0D4F43] bg-[#0D4F43]/10 text-[#0D4F43] font-semibold ring-1 ring-[#0D4F43]'
+                            : 'border-[#E4DFD5] bg-white text-[#57605E] hover:bg-[#FAF8F4]'
+                        }`}
+                      >
+                        <IconComp className="h-4 w-4" />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* 2B: Cấu hình Gemini API Key */}
+            <section className="mt-6 border-t border-[#ECE7DD] pt-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">
+                    <Sparkles className="h-4 w-4 text-purple-600" />
+                    Cấu hình Trợ lý Gemini AI (Nhập liệu thông minh)
+                  </h3>
+                  <p className="mt-0.5 text-xs text-[#57605E]">
+                    Sử dụng model <strong className="font-mono text-purple-700">gemini-2.5-flash</strong> để tự động bóc tách đơn hàng từ tin nhắn và nạp hàng loạt từ Excel.
+                  </p>
+                </div>
+                <div>
+                  {keySource === 'env' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-[11px] font-medium text-blue-700 border border-blue-200">
+                      Đang dùng biến Vercel (VITE_GEMINI_API_KEY)
+                    </span>
+                  )}
+                  {keySource === 'custom' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2.5 py-0.5 text-[11px] font-medium text-purple-700 border border-purple-200">
+                      Lưu tạm trên trình duyệt
+                    </span>
+                  )}
+                  {keySource === 'none' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-200">
+                      Chưa cấu hình
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {apiMsg && (
+                <div
+                  role="status"
+                  className={`mt-3 rounded-lg border px-3 py-2 text-xs font-medium ${
+                    apiMsg.type === 'error'
+                      ? 'border-[#A63429]/30 bg-[#A63429]/5 text-[#A63429]'
+                      : 'border-purple-300 bg-purple-50 text-purple-800'
+                  }`}
+                >
+                  {apiMsg.text}
+                </div>
+              )}
+
+              <form onSubmit={handleSaveApiKey} className="mt-3 space-y-2">
+                <div>
+                  <label htmlFor="gemini-api-key" className="block text-xs font-medium text-[#57605E]">
+                    Gemini API Key
+                  </label>
+                  <div className="relative mt-1 flex items-center">
+                    <input
+                      id="gemini-api-key"
+                      type={showApiKey ? 'text' : 'password'}
+                      placeholder="AIzaSy..."
+                      value={apiKeyInput}
+                      onChange={(e) => {
+                        setApiKeyInput(e.target.value);
+                        setApiMsg(null);
+                      }}
+                      className="w-full rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 pr-10 font-mono text-xs focus:border-purple-600 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((v) => !v)}
+                      className="absolute right-2.5 p-1 text-[#8A918E] hover:text-[#1A1F1E]"
+                      aria-label={showApiKey ? 'Ẩn mã khóa' : 'Hiện mã khóa'}
+                    >
+                      {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-purple-600 px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-purple-700"
+                    >
+                      Lưu API Key
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTestApiKey}
+                      disabled={apiTesting}
+                      className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#1A1F1E] hover:bg-[#FAF8F4] disabled:opacity-50"
+                    >
+                      {apiTesting ? 'Đang kiểm tra...' : 'Kiểm tra kết nối'}
+                    </button>
+                  </div>
+                  <a
+                    href="https://aistudio.google.com"
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="inline-flex items-center gap-1 text-[11px] text-purple-700 hover:underline"
+                  >
+                    <span>Lấy API key miễn phí tại aistudio.google.com</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+
+                {/* Hướng dẫn ngắn */}
+                <div className="mt-2 rounded-lg bg-[#FAF8F4] border border-[#ECE7DD] p-2.5 text-[11px] text-[#57605E]">
+                  <strong>Hướng dẫn lấy key miễn phí trong 1 phút:</strong>
+                  <ol className="mt-1 list-decimal list-inside space-y-0.5 text-[10.5px]">
+                    <li>Truy cập <code className="bg-white px-1 py-0.5 rounded border border-[#E4DFD5]">aistudio.google.com</code> và đăng nhập tài khoản Google.</li>
+                    <li>Bấm vào nút <strong>"Get API key"</strong> ở menu bên trái → Chọn <strong>"Create API key"</strong>.</li>
+                    <li>Sao chép mã khóa (bắt đầu bằng <code>AIzaSy...</code>) rồi dán vào ô trên và bấm "Lưu API Key".</li>
+                  </ol>
+                </div>
+              </form>
+            </section>
+          </>
+        )}
+
+        {/* Section 3: Quản lý tài khoản (Admin only) */}
         {isAdmin && (
           <section className="mt-6 border-t border-[#ECE7DD] pt-6">
             <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">

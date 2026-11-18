@@ -65,10 +65,11 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     function isValidSystemMeta(data) {
       return data.keys().hasAll(['id', 'workspaceId', 'isSampleData', 'seeded', 'serverCreatedAt', 'serverUpdatedAt']) &&
-        data.keys().hasOnly(['id', 'workspaceId', 'isSampleData', 'seeded', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'isSampleData', 'seeded', 'appIcon', 'serverCreatedAt', 'serverUpdatedAt']) &&
         isValidId(data.id) &&
         data.isSampleData is bool &&
         data.seeded is bool &&
+        isOptString(data, 'appIcon', 64) &&
         hasValidBaseMeta(data);
     }
 
@@ -241,15 +242,16 @@ service cloud.firestore {
 
     function isValidBackupPayloadMap(snap) {
       return snap is map &&
-        snap.keys().hasAll(['products', 'stockImports', 'orders', 'shareholders', 'expenses', 'budgetItems', 'accounts']) &&
-        snap.keys().hasOnly(['products', 'stockImports', 'orders', 'shareholders', 'expenses', 'budgetItems', 'accounts']) &&
+        snap.keys().hasAll(['products', 'stockImports', 'orders', 'shareholders', 'expenses', 'budgetItems', 'accounts', 'chinaPartners']) &&
+        snap.keys().hasOnly(['products', 'stockImports', 'orders', 'shareholders', 'expenses', 'budgetItems', 'accounts', 'chinaPartners']) &&
         snap.products is list && snap.products.size() <= 500 &&
         snap.stockImports is list && snap.stockImports.size() <= 1000 &&
         snap.orders is list && snap.orders.size() <= 1000 &&
         snap.shareholders is list && snap.shareholders.size() <= 100 &&
         snap.expenses is list && snap.expenses.size() <= 1000 &&
         snap.budgetItems is list && snap.budgetItems.size() <= 500 &&
-        snap.accounts is list && snap.accounts.size() <= 100;
+        snap.accounts is list && snap.accounts.size() <= 100 &&
+        snap.chinaPartners is list && snap.chinaPartners.size() <= 200;
     }
 
     function isValidBackupSnapshot(data) {
@@ -272,6 +274,24 @@ service cloud.firestore {
         data.detail is string && data.detail.size() >= 1 && data.detail.size() <= 500 &&
         isValidBackupSummary(data.summary) &&
         isValidBackupPayloadMap(data.snapshot) &&
+        hasValidBaseMeta(data);
+    }
+
+    function isValidChinaPartner(data) {
+      return data.keys().hasAll(['id', 'workspaceId', 'name', 'region', 'specialty', 'channel', 'exchangeRateCNY', 'rating', 'status', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'name', 'region', 'specialty', 'contactWeChat', 'phoneOrWhatsApp', 'channel', 'exchangeRateCNY', 'rating', 'status', 'notes', 'lastOrderDate', 'serverCreatedAt', 'serverUpdatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        data.region is string && data.region.size() >= 1 && data.region.size() <= 160 &&
+        data.specialty is string && data.specialty.size() >= 1 && data.specialty.size() <= 500 &&
+        isOptString(data, 'contactWeChat', 64) &&
+        isOptString(data, 'phoneOrWhatsApp', 32) &&
+        data.channel in ['Tiểu ngạch', 'Chính ngạch', 'Kho trung chuyển', 'Giao biên giới'] &&
+        data.exchangeRateCNY is number && data.exchangeRateCNY >= 1000 && data.exchangeRateCNY <= 10000 &&
+        data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+        data.status in ['Hợp tác thường xuyên', 'Tiềm năng', 'Tạm ngưng'] &&
+        isOptString(data, 'notes', 500) &&
+        isOptString(data, 'lastOrderDate', 20) &&
         hasValidBaseMeta(data);
     }
 
@@ -356,6 +376,14 @@ service cloud.firestore {
       allow create: if isValidId(backupId) && isValidBackupSnapshot(incoming()) && hasValidCreateMeta(incoming());
       allow update: if isValidId(backupId) && isValidBackupSnapshot(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
       allow delete: if isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
+    }
+
+    match /chinaPartners/{partnerId} {
+      allow get: if isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isStudioWorkspace(existing());
+      allow create: if isValidId(partnerId) && isValidChinaPartner(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isValidId(partnerId) && isValidChinaPartner(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
     }
   }
 }

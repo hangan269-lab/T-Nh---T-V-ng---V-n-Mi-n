@@ -2,20 +2,27 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ArchiveRestore,
   Boxes,
+  Crown,
   Download,
+  Flower,
+  Gem,
   History,
   LayoutDashboard,
+  Leaf,
   LogOut,
   Menu,
   Plus,
   Settings,
   ShoppingBag,
+  Sparkles,
+  Star,
   Trash2,
   Upload,
   Wallet,
   X,
 } from 'lucide-react';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
+import { AiExcelImportModal, AiImportMode } from './components/AiExcelImportModal';
 import { AuditLogTab } from './components/AuditLogTab';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { ConfirmModal } from './components/ConfirmModal';
@@ -29,8 +36,10 @@ import { createEmptyState } from './data/seedData';
 import {
   AppBackupSnapshot,
   AppState,
+  AuditLogEntry,
   Expense,
   Order,
+  PaymentStatus,
   Product,
   Shareholder,
   ShippingStatus,
@@ -38,6 +47,11 @@ import {
   UserAccount,
   UserRole,
 } from './types/erp';
+import {
+  ExtractedExpenseRow,
+  ExtractedOrderRow,
+  ExtractedProductRow,
+} from './utils/gemini';
 import {
   ActorIdentity,
   addExpenseWithAudit,
@@ -64,6 +78,7 @@ import {
   exportStateToJSON,
   exportViettelPostCSV,
   formatDateVN,
+  formatVND,
   getShippingMethodSlug,
   getTodayISO,
   markOrdersShippingStatus,
@@ -190,6 +205,7 @@ export default function App() {
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [backupModalOpen, setBackupModalOpen] = useState(false);
+  const [aiImportMode, setAiImportMode] = useState<AiImportMode | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
@@ -732,6 +748,189 @@ export default function App() {
     showNotice('Đã tải file JSON bản sao lưu cũ.');
   };
 
+  const handleUpdateAppIcon = (newIcon: string) => {
+    commitNextState((prev: AppState) => ({
+      ...prev,
+      appIcon: newIcon,
+    }));
+    showNotice(`Đã đổi biểu tượng đại diện của ứng dụng sang "${newIcon}".`);
+  };
+
+  const handleSaveAiExpenses = (extracted: ExtractedExpenseRow[]) => {
+    if (extracted.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const newExpenses: Expense[] = extracted.map((row, idx) => ({
+      id: `exp_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+      date: row.date,
+      category: row.category,
+      brandScope: row.brandScope,
+      detail: row.detail,
+      amount: row.amount,
+      paidBy: row.paidBy,
+      receiptNote: row.receiptNote,
+      status: row.status,
+      enteredBy: actor.name,
+    }));
+
+    const auditEntry: AuditLogEntry = {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: nowIso,
+      actorId: actor.id,
+      actorName: actor.name,
+      category: 'Tài chính',
+      action: 'Nhập Excel hàng loạt bằng AI',
+      detail: `${actor.name} đã dùng Gemini AI nhập hàng loạt ${extracted.length} khoản chi (${formatVND(
+        extracted.reduce((sum, e) => sum + e.amount, 0)
+      )}) từ Excel/Sheets.`,
+    };
+
+    commitNextState((prev: AppState) => ({
+      ...prev,
+      expenses: [...newExpenses, ...prev.expenses],
+      auditLogs: [auditEntry, ...prev.auditLogs],
+    }));
+
+    showNotice(
+      `Đã nạp thành công ${extracted.length} khoản chi phí từ bảng tính vào sổ quỹ và đồng bộ Firestore.`
+    );
+  };
+
+  const handleSaveAiOrders = (extracted: ExtractedOrderRow[]) => {
+    if (extracted.length === 0) return;
+    const nowIso = new Date().toISOString();
+
+    let maxNumber = 0;
+    for (const o of stateRef.current.orders) {
+      const match = /^DH-(\d+)$/i.exec(o.code);
+      if (match) {
+        const n = parseInt(match[1], 10);
+        if (n > maxNumber) maxNumber = n;
+      }
+    }
+
+    const newOrders: Order[] = extracted.map((row, idx) => {
+      const codeNum = maxNumber + idx + 1;
+      const orderCode = `DH-${String(codeNum).padStart(3, '0')}`;
+
+      const items = row.items.map((it) => {
+        const prod = stateRef.current.products.find(
+          (p) =>
+            p.code.toLowerCase() === it.productCodeOrName.toLowerCase() ||
+            p.name.toLowerCase().includes(it.productCodeOrName.toLowerCase())
+        );
+        return {
+          productId: prod ? prod.id : (stateRef.current.products[0]?.id ?? `temp_${idx}`),
+          productCode: prod ? prod.code : it.productCodeOrName,
+          productName: prod ? prod.name : it.productCodeOrName,
+          size: it.size,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice || prod?.sellPrice || 0,
+        };
+      });
+
+      return {
+        id: `ord_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+        code: orderCode,
+        date: row.date,
+        brand: row.brand,
+        customerName: row.customerName,
+        customerPhone: row.customerPhone,
+        shippingAddress: row.shippingAddress,
+        shippingMethod: row.shippingMethod,
+        shopShippingCost: 0,
+        shippingCostPayer: 'Khách chịu',
+        shippingStatus: row.shippingStatus,
+        weightGrams: 500,
+        items,
+        shippingFee: row.shippingFee,
+        discount: row.discount,
+        note: row.note,
+        paymentStatus:
+          row.paymentStatus === 'Đã thanh toán'
+            ? PaymentStatus.PAID
+            : PaymentStatus.UNPAID,
+        isCancelled: false,
+        createdAt: nowIso,
+        createdBy: actor.name,
+      };
+    });
+
+    const auditEntry: AuditLogEntry = {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: nowIso,
+      actorId: actor.id,
+      actorName: actor.name,
+      category: 'Đơn hàng',
+      action: 'Nhập Excel hàng loạt bằng AI',
+      detail: `${actor.name} đã dùng Gemini AI nhập hàng loạt ${extracted.length} đơn hàng từ bảng tính Excel/Sheets.`,
+    };
+
+    commitNextState((prev: AppState) => ({
+      ...prev,
+      orders: [...newOrders, ...prev.orders],
+      auditLogs: [auditEntry, ...prev.auditLogs],
+    }));
+
+    showNotice(
+      `Đã nạp thành công ${extracted.length} đơn hàng từ bảng tính vào hệ thống và đồng bộ Firestore.`
+    );
+  };
+
+  const handleSaveAiProducts = (extracted: ExtractedProductRow[]) => {
+    if (extracted.length === 0) return;
+    const nowIso = new Date().toISOString();
+
+    const newProducts: Product[] = extracted.map((row, idx) => ({
+      id: `prod_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+      code: row.code,
+      name: row.name,
+      brand: row.brand,
+      costPrice: row.costPrice,
+      sellPrice: row.sellPrice,
+      initialStock: row.initialStock,
+      stockAdjustments: {},
+      isArchived: false,
+    }));
+
+    const auditEntry: AuditLogEntry = {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: nowIso,
+      actorId: actor.id,
+      actorName: actor.name,
+      category: 'Kho hàng',
+      action: 'Nhập Excel hàng loạt bằng AI',
+      detail: `${actor.name} đã dùng Gemini AI nạp danh mục ${extracted.length} mẫu sản phẩm vào kho hàng.`,
+    };
+
+    commitNextState((prev: AppState) => ({
+      ...prev,
+      products: [...prev.products, ...newProducts],
+      auditLogs: [auditEntry, ...prev.auditLogs],
+    }));
+
+    showNotice(
+      `Đã nạp thành công ${extracted.length} mẫu sản phẩm vào danh mục kho và đồng bộ Firestore.`
+    );
+  };
+
+  const renderAppIcon = (iconName?: string) => {
+    switch (iconName) {
+      case 'Flower':
+        return <Flower className="h-5 w-5 text-[#0D4F43]" />;
+      case 'Crown':
+        return <Crown className="h-5 w-5 text-[#0D4F43]" />;
+      case 'Gem':
+        return <Gem className="h-5 w-5 text-[#0D4F43]" />;
+      case 'Leaf':
+        return <Leaf className="h-5 w-5 text-[#0D4F43]" />;
+      case 'Star':
+        return <Star className="h-5 w-5 text-[#0D4F43]" />;
+      case 'Sparkles':
+      default:
+        return <Sparkles className="h-5 w-5 text-[#0D4F43]" />;
+    }
+  };
+
   const activeNav = NAV_ITEMS.find((n) => n.id === activeTab) ?? NAV_ITEMS[0];
   const todayISO = getTodayISO();
   const hasAnyData =
@@ -746,8 +945,11 @@ export default function App() {
       <div>
         {/* Brand Wordmark */}
         <div className="border-b border-[#ECE7DD] pb-5">
-          <div className="font-serif text-lg font-bold tracking-tight text-[#1A1F1E]">
-            Tơ Nhã · Tơ Vương
+          <div className="flex items-center gap-2">
+            {renderAppIcon(state.appIcon)}
+            <div className="font-serif text-lg font-bold tracking-tight text-[#1A1F1E]">
+              Tơ Nhã · Tơ Vương
+            </div>
           </div>
           <div className="mt-0.5 text-xs font-medium text-[#0D4F43]">
             &amp; Vân Miên Studio
@@ -839,17 +1041,6 @@ export default function App() {
           <ArchiveRestore className="h-3.5 w-3.5" />
           Bản sao lưu ({state.backups.length})
         </button>
-
-        {currentUser.role === 'Admin' && hasAnyData && (
-          <button
-            type="button"
-            onClick={() => setConfirmClearOpen(true)}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#A63429]/25 bg-white px-3 py-2 text-xs font-medium text-[#A63429] transition-colors hover:bg-[#A63429]/5 whitespace-nowrap"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Reset dữ liệu về 0
-          </button>
-        )}
 
         <input
           ref={fileInputRef}
@@ -1032,6 +1223,8 @@ export default function App() {
               onExportOrdersCustom={handleExportOrdersCustom}
               onExportViettelPostCSV={handleExportViettelPostCSV}
               onSaveProduct={handleSaveProduct}
+              onOpenAiExcelImport={() => setAiImportMode('orders')}
+              onOpenSettings={() => setSettingsOpen(true)}
             />
           )}
 
@@ -1045,6 +1238,7 @@ export default function App() {
               onAddStockImport={handleAddStockImport}
               onUpdateStockImport={handleUpdateStockImport}
               onDeleteStockImport={handleDeleteStockImport}
+              onOpenAiExcelImport={() => setAiImportMode('products')}
             />
           )}
 
@@ -1060,6 +1254,7 @@ export default function App() {
               onToggleExpenseStatus={handleToggleExpenseStatus}
               onDeleteExpense={handleDeleteExpense}
               onExportFinanceXLSX={handleExportFinanceXLSX}
+              onOpenAiExcelImport={() => setAiImportMode('expenses')}
             />
           )}
 
@@ -1090,11 +1285,29 @@ export default function App() {
         onDownloadBackupJSON={handleDownloadBackupJSON}
       />
 
+      {aiImportMode && (
+        <AiExcelImportModal
+          open={Boolean(aiImportMode)}
+          mode={aiImportMode}
+          existingProducts={state.products}
+          onClose={() => setAiImportMode(null)}
+          onOpenSettings={() => {
+            setAiImportMode(null);
+            setSettingsOpen(true);
+          }}
+          onSaveExpenses={handleSaveAiExpenses}
+          onSaveOrders={handleSaveAiOrders}
+          onSaveProducts={handleSaveAiProducts}
+        />
+      )}
+
       <AccountSettingsModal
         open={settingsOpen}
         currentUser={currentUser}
         accounts={state.accounts}
         hasSystemData={hasAnyData}
+        appIcon={state.appIcon || 'Sparkles'}
+        onChangeAppIcon={handleUpdateAppIcon}
         onClose={() => setSettingsOpen(false)}
         onChangePin={handleChangePin}
         onCreateAccount={handleCreateAccount}

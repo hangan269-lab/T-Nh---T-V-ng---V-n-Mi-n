@@ -9,6 +9,7 @@
         "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
         "isSampleData": { "type": "boolean" },
         "seeded": { "type": "boolean" },
+        "appIcon": { "type": "string", "maxLength": 64 },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
@@ -204,11 +205,34 @@
         "action": { "type": "string", "maxLength": 160 },
         "detail": { "type": "string", "maxLength": 500 },
         "summary": { "type": "object", "description": "Counts of records preserved in this backup snapshot." },
-        "snapshot": { "type": "object", "description": "Native map containing products, stockImports, orders, shareholders, expenses, budgetItems, and accounts lists." },
+        "snapshot": { "type": "object", "description": "Native map containing products, stockImports, orders, shareholders, expenses, budgetItems, accounts, and chinaPartners lists." },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "workspaceId", "createdAt", "actorId", "actorName", "category", "action", "detail", "summary", "snapshot", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "ChinaPartner": {
+      "title": "ChinaPartner",
+      "description": "China Sourcing Partner / Supplier record for market expansion.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
+        "name": { "type": "string", "maxLength": 160 },
+        "region": { "type": "string", "maxLength": 160 },
+        "specialty": { "type": "string", "maxLength": 500 },
+        "contactWeChat": { "type": "string", "maxLength": 64 },
+        "phoneOrWhatsApp": { "type": "string", "maxLength": 32 },
+        "channel": { "type": "string", "enum": ["Tiểu ngạch", "Chính ngạch", "Kho trung chuyển", "Giao biên giới"] },
+        "exchangeRateCNY": { "type": "number" },
+        "rating": { "type": "number" },
+        "status": { "type": "string", "enum": ["Hợp tác thường xuyên", "Tiềm năng", "Tạm ngưng"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "lastOrderDate": { "type": "string", "maxLength": 20 },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "workspaceId", "name", "region", "specialty", "channel", "exchangeRateCNY", "rating", "status", "serverCreatedAt", "serverUpdatedAt"]
     }
   },
   "firestore": {
@@ -251,6 +275,10 @@
     "/backups/{backupId}": {
       "schema": { "$ref": "#/entities/BackupSnapshot" },
       "description": "Automatic pre-delete snapshots synced in real time for safe recovery."
+    },
+    "/chinaPartners/{partnerId}": {
+      "schema": { "$ref": "#/entities/ChinaPartner" },
+      "description": "China sourcing partners and market expansion directory."
     }
   }
 }

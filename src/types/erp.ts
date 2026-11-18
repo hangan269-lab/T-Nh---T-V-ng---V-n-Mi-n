@@ -191,6 +191,21 @@ export interface BudgetItem {
   estimatedUnitPrice: number;
 }
 
+export interface ChinaPartner {
+  id: string;
+  name: string;
+  region: string; // e.g. Hàng Châu, Tô Châu, Quảng Châu, Nghĩa Ô
+  specialty: string; // e.g. Tơ lụa tự nhiên, Vải gấm Jacquard, Hộp trà cao cấp
+  contactWeChat: string;
+  phoneOrWhatsApp: string;
+  channel: 'Tiểu ngạch' | 'Chính ngạch' | 'Kho trung chuyển' | 'Giao biên giới';
+  exchangeRateCNY: number; // e.g. 3550 VND/CNY
+  rating: number; // 1-5
+  status: 'Hợp tác thường xuyên' | 'Tiềm năng' | 'Tạm ngưng';
+  notes: string;
+  lastOrderDate: string;
+}
+
 export interface AppBackupSnapshotData {
   products: Product[];
   stockImports: StockImport[];
@@ -199,6 +214,7 @@ export interface AppBackupSnapshotData {
   expenses: Expense[];
   budgetItems: BudgetItem[];
   accounts: UserAccount[];
+  chinaPartners: ChinaPartner[];
 }
 
 export interface AppBackupSnapshotSummary {
@@ -209,6 +225,7 @@ export interface AppBackupSnapshotSummary {
   expensesCount: number;
   budgetItemsCount: number;
   accountsCount: number;
+  chinaPartnersCount: number;
 }
 
 export interface AppBackupSnapshot {
@@ -233,5 +250,7 @@ export interface AppState {
   accounts: UserAccount[];
   auditLogs: AuditLogEntry[];
   backups: AppBackupSnapshot[];
+  chinaPartners: ChinaPartner[];
+  appIcon?: string;
   isSampleData: boolean;
 }

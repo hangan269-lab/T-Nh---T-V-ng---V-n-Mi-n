@@ -3,6 +3,7 @@ import {
   AppState,
   AuditLogEntry,
   BudgetItem,
+  ChinaPartner,
   Expense,
   Order,
   OrderItem,
@@ -26,6 +27,7 @@ export const BUSINESS_COLLECTIONS = [
   'accounts',
   'auditLogs',
   'backups',
+  'chinaPartners',
 ] as const;
 
 export type BusinessCollectionName = (typeof BUSINESS_COLLECTIONS)[number];
@@ -249,6 +251,23 @@ export function sanitizeAuditLogPayload(entry: AuditLogEntry): Record<string, un
   return doc;
 }
 
+export function sanitizeChinaPartnerPayload(cp: ChinaPartner): Record<string, unknown> {
+  return {
+    id: sanitizeId(cp.id, 'cp'),
+    name: clampStr(cp.name, BLUEPRINT_LIMITS.NAME_MAX) || 'Đối tác TQ',
+    region: clampStr(cp.region, BLUEPRINT_LIMITS.NAME_MAX) || 'Hàng Châu',
+    specialty: clampStr(cp.specialty, BLUEPRINT_LIMITS.ADDRESS_MAX) || 'Lụa tơ tằm',
+    contactWeChat: clampStr(cp.contactWeChat, BLUEPRINT_LIMITS.USERNAME_MAX) || '',
+    phoneOrWhatsApp: clampStr(cp.phoneOrWhatsApp, BLUEPRINT_LIMITS.PHONE_MAX) || '',
+    channel: cp.channel || 'Chính ngạch',
+    exchangeRateCNY: clampNum(cp.exchangeRateCNY, 1000, 10000),
+    rating: clampNum(cp.rating, 1, 5),
+    status: cp.status || 'Hợp tác thường xuyên',
+    notes: clampStr(cp.notes ?? '', BLUEPRINT_LIMITS.NOTE_MAX),
+    lastOrderDate: clampStr(cp.lastOrderDate, BLUEPRINT_LIMITS.DATE_MAX),
+  };
+}
+
 export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<string, unknown> {
   const rawSnap = bak.snapshot ?? {
     products: [],
@@ -258,6 +277,7 @@ export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<st
     expenses: [],
     budgetItems: [],
     accounts: [],
+    chinaPartners: [],
   };
 
   const products = (Array.isArray(rawSnap.products) ? rawSnap.products : [])
@@ -281,6 +301,9 @@ export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<st
   const accounts = (Array.isArray(rawSnap.accounts) ? rawSnap.accounts : [])
     .slice(0, 100)
     .map(sanitizeUserAccountPayload);
+  const chinaPartners = (Array.isArray(rawSnap.chinaPartners) ? rawSnap.chinaPartners : [])
+    .slice(0, 200)
+    .map(sanitizeChinaPartnerPayload);
 
   return {
     id: sanitizeId(bak.id, 'bak'),
@@ -298,6 +321,7 @@ export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<st
       expensesCount: clampNum(bak.summary?.expensesCount ?? expenses.length, 0, 1000),
       budgetItemsCount: clampNum(bak.summary?.budgetItemsCount ?? budgetItems.length, 0, 500),
       accountsCount: clampNum(bak.summary?.accountsCount ?? accounts.length, 0, 100),
+      chinaPartnersCount: clampNum(bak.summary?.chinaPartnersCount ?? chinaPartners.length, 0, 200),
     },
     snapshot: {
       products,
@@ -307,6 +331,7 @@ export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<st
       expenses,
       budgetItems,
       accounts,
+      chinaPartners,
     },
   };
 }
@@ -334,6 +359,8 @@ export function sanitizeEntityForCollection(
       return sanitizeAuditLogPayload(record as AuditLogEntry);
     case 'backups':
       return sanitizeBackupSnapshotPayload(record as AppBackupSnapshot);
+    case 'chinaPartners':
+      return sanitizeChinaPartnerPayload(record as ChinaPartner);
   }
 }
 
@@ -396,6 +423,6 @@ export function computeStateDiffOps(prev: AppState, next: AppState): StateDiffRe
   return {
     upserts,
     deletes,
-    updateSystemMeta: prev.isSampleData !== next.isSampleData,
+    updateSystemMeta: prev.isSampleData !== next.isSampleData || prev.appIcon !== next.appIcon,
   };
 }

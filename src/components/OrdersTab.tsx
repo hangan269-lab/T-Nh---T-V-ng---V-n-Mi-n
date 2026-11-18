@@ -6,8 +6,10 @@ import {
   Download,
   Edit3,
   FileSpreadsheet,
+  Loader2,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   Truck,
   X,
@@ -44,6 +46,7 @@ import {
   SaveProductInput,
   ShippingExportFilter,
 } from '../utils/finance';
+import { getGeminiApiKey, parseCustomerChatWithGemini } from '../utils/gemini';
 import { parseQuickOrderText } from '../utils/orderParser';
 import { ConfirmModal } from './ConfirmModal';
 import { OrderEditModal } from './OrderEditModal';
@@ -82,6 +85,8 @@ interface OrdersTabProps {
   onSaveProduct?: (
     input: SaveProductInput
   ) => { ok: true; hasStockAdjustment?: boolean; product?: Product } | { ok: false; error: string };
+  onOpenAiExcelImport?: () => void;
+  onOpenSettings?: () => void;
 }
 
 interface DraftLine {
@@ -108,6 +113,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   onExportOrdersCustom,
   onExportViettelPostCSV,
   onSaveProduct,
+  onOpenAiExcelImport,
+  onOpenSettings,
 }) => {
   const todayISO = getTodayISO();
   const [filter, setFilter] = useState<OrderFilter>('all');
@@ -156,6 +163,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [quickPasteText, setQuickPasteText] = useState('');
   const [quickParseNotice, setQuickParseNotice] = useState<string | null>(null);
+  const [aiParsingOrder, setAiParsingOrder] = useState(false);
   const [quickProductModalOpen, setQuickProductModalOpen] = useState(false);
 
   const activeProducts = useMemo(
@@ -232,15 +240,76 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     });
   }, [isCreateOpen, activeProducts, brandProducts]);
 
-  const handleApplyQuickPaste = (rawInput: string) => {
+  const handleApplyQuickPaste = async (rawInput: string) => {
     const trimmed = rawInput.trim();
     if (!trimmed) {
       setQuickParseNotice(null);
       return;
     }
 
-    const activeProducts = state.products.filter((p) => !p.isArchived);
-    const parsed = parseQuickOrderText(trimmed, activeProducts);
+    const activeProds = state.products.filter((p) => !p.isArchived);
+    const apiKey = getGeminiApiKey();
+
+    if (apiKey) {
+      setAiParsingOrder(true);
+      setQuickParseNotice(null);
+      setFormError(null);
+      try {
+        const parsed = await parseCustomerChatWithGemini(trimmed, activeProds);
+        if (parsed.customerName) setCustomerName(parsed.customerName);
+        if (parsed.customerPhone) setCustomerPhone(parsed.customerPhone);
+        if (parsed.shippingAddress) setShippingAddress(parsed.shippingAddress);
+        if (parsed.shippingMethod) setShippingMethod(parsed.shippingMethod);
+        if (parsed.brand) setBrand(parsed.brand);
+        if (parsed.note) setNote(parsed.note);
+
+        if (parsed.items && parsed.items.length > 0) {
+          const newLines: DraftLine[] = parsed.items.map((it, idx) => {
+            let prod = activeProds.find((p) => p.id === it.matchedProductId);
+            if (!prod) {
+              const codeOrName = (it.productCode || it.productName || '').toLowerCase();
+              prod =
+                activeProds.find((p) => p.code.toLowerCase() === codeOrName) ||
+                activeProds.find((p) => p.name.toLowerCase().includes(codeOrName)) ||
+                activeProds.find((p) => p.brand === parsed.brand) ||
+                activeProds[0];
+            }
+            return {
+              key: `line_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+              productId: prod ? prod.id : (activeProds[0]?.id ?? ''),
+              size: it.size,
+              quantity: Math.max(1, it.quantity),
+              unitPrice: prod ? prod.sellPrice : it.unitPrice,
+            };
+          });
+          setLines(newLines);
+        }
+
+        const summaryParts: string[] = [];
+        if (parsed.customerName) summaryParts.push(`Khách: ${parsed.customerName}`);
+        if (parsed.customerPhone) summaryParts.push(`SĐT: ${parsed.customerPhone}`);
+        if (parsed.shippingAddress) summaryParts.push(`Đ/c: ${parsed.shippingAddress}`);
+        if (parsed.shippingMethod) summaryParts.push(`Vận chuyển: ${parsed.shippingMethod}`);
+        if (parsed.items.length > 0) {
+          summaryParts.push(
+            `Sản phẩm: ${parsed.items.map((it) => `${it.productName} (x${it.quantity} - ${it.size})`).join(', ')}`
+          );
+        }
+
+        setQuickParseNotice(
+          `✨ AI Gemini 2.5 Flash đã bóc tách & điền tự động: ${summaryParts.join(' · ')}`
+        );
+        setAiParsingOrder(false);
+        return;
+      } catch (err: unknown) {
+        console.warn('Gemini chat parsing encountered error, falling back to regex:', err);
+      } finally {
+        setAiParsingOrder(false);
+      }
+    }
+
+    // Heuristic regex fallback if no Gemini key or network fails:
+    const parsed = parseQuickOrderText(trimmed, activeProds);
     setFormError(null);
 
     if (parsed.customerName) {
@@ -256,8 +325,8 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
     }
 
     const matchedProduct = parsed.productId
-      ? activeProducts.find((p) => p.id === parsed.productId)
-      : activeProducts.find((p) => p.brand === nextBrand);
+      ? activeProds.find((p) => p.id === parsed.productId)
+      : activeProds.find((p) => p.brand === nextBrand);
 
     const nextSize: SizeOption =
       parsed.size ?? (nextBrand === Brand.VAN_MIEN ? 'Freesize' : 'M');
@@ -584,24 +653,24 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
             )}
 
             {/* Ô Dán nhanh thông tin khách từ tin nhắn */}
-            <div className="rounded-xl border border-[#E4DFD5] bg-[#FAF8F4] p-4">
+            <div className="rounded-xl border border-purple-200 bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30 p-4 shadow-2xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label
                   htmlFor="order-quick-paste"
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1A1F1E]"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-purple-900"
                 >
-                  <ClipboardPaste className="h-3.5 w-3.5 text-[#0D4F43]" />
-                  Dán nhanh thông tin khách
+                  <Sparkles className="h-4 w-4 text-purple-600 animate-pulse" />
+                  ✨ Dán tin nhắn chốt đơn (AI tự điền form)
                 </label>
                 <span className="text-[11px] text-[#57605E]">
-                  Tự động tách Tên, SĐT, Nhánh, Mẫu, Số lượng và Size khi dán tin nhắn
+                  AI Gemini 2.5 Flash tự động bóc tách Tên, SĐT, Địa chỉ, khớp đúng Mẫu trong kho, Số lượng và Vận chuyển
                 </span>
               </div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-stretch">
                 <textarea
                   id="order-quick-paste"
                   rows={2}
-                  placeholder="Ví dụ: Chị Lan 0912345678 lấy 1 bộ Tơ Nhã Hoa Mai size M"
+                  placeholder="Ví dụ: Hoa 0988111222 số 5 Lý Thường Kiệt lấy 2 set phủ tơ size S với 1 trà phổ nhĩ, gửi VTP"
                   value={quickPasteText}
                   onChange={(e) => setQuickPasteText(e.target.value)}
                   onPaste={(e) => {
@@ -615,16 +684,26 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                       }, 0);
                     }
                   }}
-                  className="flex-1 rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-sm text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-[#0D4F43] focus:outline-none"
+                  className="flex-1 rounded-lg border border-purple-200 bg-white px-3 py-2 text-sm text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-purple-600 focus:ring-1 focus:ring-purple-600 focus:outline-none"
                 />
                 <div className="flex gap-2 sm:flex-col sm:justify-center">
                   <button
                     type="button"
                     onClick={() => handleApplyQuickPaste(quickPasteText)}
-                    disabled={!quickPasteText.trim()}
-                    className="rounded-lg bg-[#0D4F43] px-4 py-2 text-xs font-medium text-white transition-colors hover:bg-[#093B32] disabled:opacity-45 whitespace-nowrap shrink-0"
+                    disabled={aiParsingOrder || !quickPasteText.trim()}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:from-purple-700 hover:to-indigo-700 disabled:opacity-45 whitespace-nowrap shrink-0"
                   >
-                    Tách &amp; Điền tự động
+                    {aiParsingOrder ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Đang bóc tách...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>AI Tự điền form</span>
+                      </>
+                    )}
                   </button>
                   {quickPasteText && (
                     <button
@@ -633,15 +712,21 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                         setQuickPasteText('');
                         setQuickParseNotice(null);
                       }}
-                      className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#57605E] hover:bg-[#F3EFE6] whitespace-nowrap shrink-0"
+                      className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1 text-xs font-medium text-[#57605E] hover:bg-[#F3EFE6] whitespace-nowrap shrink-0"
                     >
                       Xóa ô dán
                     </button>
                   )}
                 </div>
               </div>
-              {quickParseNotice && (
-                <p role="status" className="mt-2 text-xs font-medium text-[#0D4F43]">
+              {aiParsingOrder && (
+                <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-purple-100/60 px-3 py-1.5 text-xs font-medium text-purple-900">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-600" />
+                  <span>Đang dùng AI đọc và chuẩn hóa dữ liệu...</span>
+                </div>
+              )}
+              {quickParseNotice && !aiParsingOrder && (
+                <p role="status" className="mt-2 text-xs font-medium text-purple-900 bg-purple-50 rounded-lg p-2 border border-purple-200/60">
                   {quickParseNotice}
                 </p>
               )}
@@ -1231,6 +1316,16 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
               <Download className="h-3.5 w-3.5" />
               Xuất CSV
             </button>
+            {onOpenAiExcelImport && (
+              <button
+                type="button"
+                onClick={onOpenAiExcelImport}
+                className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:from-purple-700 hover:to-indigo-700 whitespace-nowrap shrink-0"
+              >
+                <Sparkles className="h-4 w-4" />
+                ✨ Nhập nhanh từ Excel (AI)
+              </button>
+            )}
             {!isCreateOpen && (
               <button
                 type="button"

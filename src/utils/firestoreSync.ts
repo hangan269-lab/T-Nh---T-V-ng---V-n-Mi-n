@@ -260,9 +260,11 @@ export function subscribeWorkspaceRealtime(
     accounts: [],
     auditLogs: [],
     backups: [],
+    chinaPartners: [],
   };
 
   let isSampleData = false;
+  let appIcon = 'Sparkles';
   const readySet = new Set<string>();
   const expectedCount = BUSINESS_COLLECTIONS.length + 1;
   let notifiedReady = false;
@@ -285,6 +287,9 @@ export function subscribeWorkspaceRealtime(
     );
     const sortedProducts = [...(latestCollections.products as Product[])].sort((a, b) =>
       a.code.localeCompare(b.code)
+    );
+    const sortedChinaPartners = [...(latestCollections.chinaPartners as Array<{ name: string }>)].sort((a, b) =>
+      a.name.localeCompare(b.name)
     );
     const TEAM_ORDER: Record<string, number> = {
       ngan: 0,
@@ -310,6 +315,8 @@ export function subscribeWorkspaceRealtime(
       accounts: sortedAccounts,
       auditLogs: sortedLogs,
       backups: sortedBackups,
+      chinaPartners: sortedChinaPartners as any,
+      appIcon,
       isSampleData,
     };
 
@@ -339,6 +346,9 @@ export function subscribeWorkspaceRealtime(
             serverCreatedAt: raw.serverCreatedAt,
           });
           isSampleData = Boolean(raw.isSampleData);
+          if (typeof raw.appIcon === 'string' && raw.appIcon.trim()) {
+            appIcon = raw.appIcon;
+          }
         }
         readySet.add('system');
         emit();
@@ -458,6 +468,7 @@ export async function commitStateDiffToFirestore(
         id: SYSTEM_META_DOC_ID,
         workspaceId: WORKSPACE_ID,
         isSampleData: Boolean(nextState.isSampleData),
+        appIcon: nextState.appIcon || 'Sparkles',
         seeded: true,
         serverCreatedAt: sysCreated,
         serverUpdatedAt: nowServerTs,

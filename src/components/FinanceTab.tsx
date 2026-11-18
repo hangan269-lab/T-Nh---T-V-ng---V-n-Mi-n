@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle2, Clock, Edit3, FileSpreadsheet, Plus, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Clock, Edit3, FileSpreadsheet, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import {
   ALL_BRANDS,
   AppState,
@@ -35,6 +35,7 @@ interface FinanceTabProps {
   onToggleExpenseStatus: (id: string) => void;
   onDeleteExpense: (id: string) => void;
   onExportFinanceXLSX: () => void;
+  onOpenAiExcelImport?: () => void;
 }
 
 export const FinanceTab: React.FC<FinanceTabProps> = ({
@@ -48,6 +49,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
   onToggleExpenseStatus,
   onDeleteExpense,
   onExportFinanceXLSX,
+  onOpenAiExcelImport,
 }) => {
   const isAdmin = currentUser.role === 'Admin';
   const fund = computeFundSummary(state.shareholders, state.expenses);
@@ -552,14 +554,26 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({
               {!isAdmin && ' (Chỉ Admin mới có quyền xóa vĩnh viễn giao dịch tài chính.)'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onExportFinanceXLSX}
-            className="inline-flex items-center gap-2 rounded-lg bg-[#166534] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#14532D] whitespace-nowrap shrink-0"
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            Xuất Excel Thu Chi &amp; Tổng hợp
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            {onOpenAiExcelImport && (
+              <button
+                type="button"
+                onClick={onOpenAiExcelImport}
+                className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:from-purple-700 hover:to-indigo-700 whitespace-nowrap shrink-0"
+              >
+                <Sparkles className="h-4 w-4" />
+                ✨ Nhập nhanh từ Excel (AI)
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onExportFinanceXLSX}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#166534] px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#14532D] whitespace-nowrap shrink-0"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              Xuất Excel Thu Chi &amp; Tổng hợp
+            </button>
+          </div>
         </div>
 
         {/* Form thêm khoản chi */}

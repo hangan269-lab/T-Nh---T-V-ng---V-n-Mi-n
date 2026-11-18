@@ -7,6 +7,7 @@ import {
   AuditLogEntry,
   Brand,
   BudgetItem,
+  ChinaPartner,
   Expense,
   ExpenseStatus,
   Order,
@@ -139,6 +140,7 @@ export function createPreDeleteBackupSnapshot(
   const expenses = cloneSnapshotList(state.expenses);
   const budgetItems = cloneSnapshotList(state.budgetItems);
   const accounts = cloneSnapshotList(state.accounts);
+  const chinaPartners = cloneSnapshotList(state.chinaPartners ?? []);
 
   return {
     id: `bak_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -156,6 +158,7 @@ export function createPreDeleteBackupSnapshot(
       expensesCount: expenses.length,
       budgetItemsCount: budgetItems.length,
       accountsCount: accounts.length,
+      chinaPartnersCount: chinaPartners.length,
     },
     snapshot: {
       products,
@@ -165,6 +168,7 @@ export function createPreDeleteBackupSnapshot(
       expenses,
       budgetItems,
       accounts,
+      chinaPartners,
     },
   };
 }
@@ -218,6 +222,7 @@ export function restoreFromBackupWithAudit(
       shareholders: cloneSnapshotList(target.snapshot.shareholders),
       expenses: cloneSnapshotList(target.snapshot.expenses),
       budgetItems: cloneSnapshotList(target.snapshot.budgetItems),
+      chinaPartners: cloneSnapshotList(target.snapshot.chinaPartners || []),
       accounts: restoredAccounts,
       auditLogs: [log, ...state.auditLogs],
       backups: prependBackupSnapshot(state.backups, safetyBackup),
@@ -259,6 +264,7 @@ export function resetSystemDataWithAudit(
       shareholders: [],
       expenses: [],
       budgetItems: [],
+      chinaPartners: [],
       accounts: state.accounts,
       auditLogs: [log, ...state.auditLogs],
       backups: prependBackupSnapshot(state.backups, backup),
@@ -2436,6 +2442,90 @@ export function deleteBudgetItemWithAudit(
   };
 }
 
+export function addChinaPartnerWithAudit(
+  state: AppState,
+  partner: Omit<ChinaPartner, 'id'>,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const created: ChinaPartner = {
+    ...partner,
+    id: `cp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+  };
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Thêm đối tác TQ',
+    detail: `${actor.name} đã thêm đối tác TQ '${created.name}' (${created.region})`,
+  });
+  return {
+    ...state,
+    chinaPartners: [...(state.chinaPartners || []), created],
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function updateChinaPartnerWithAudit(
+  state: AppState,
+  partnerId: string,
+  patch: Partial<ChinaPartner>,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const prev = (state.chinaPartners || []).find((p) => p.id === partnerId);
+  if (!prev) return state;
+
+  const updated: ChinaPartner = {
+    ...prev,
+    ...patch,
+    id: prev.id,
+  };
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Sửa đối tác TQ',
+    detail: `${actor.name} đã cập nhật thông tin đối tác TQ '${updated.name}'`,
+    oldValue: prev.name,
+    newValue: updated.name,
+  });
+
+  return {
+    ...state,
+    chinaPartners: (state.chinaPartners || []).map((p) => (p.id === partnerId ? updated : p)),
+    auditLogs: [log, ...state.auditLogs],
+  };
+}
+
+export function deleteChinaPartnerWithAudit(
+  state: AppState,
+  partnerId: string,
+  actor: ActorIdentity = DEFAULT_ACTOR
+): AppState {
+  const target = (state.chinaPartners || []).find((p) => p.id === partnerId);
+  if (!target) return state;
+
+  const backup = createPreDeleteBackupSnapshot(state, actor, {
+    category: 'Kho hàng',
+    action: 'Trước khi xóa đối tác TQ',
+    detail: `Xóa đối tác TQ '${target.name}' (${target.region})`,
+  });
+
+  const log = createAuditEntry({
+    actor,
+    category: 'Kho hàng',
+    action: 'Xóa đối tác TQ',
+    detail: `${actor.name} đã xóa đối tác TQ '${target.name}' (${target.region})`,
+    oldValue: target.name,
+    newValue: 'Đã xóa',
+  });
+
+  return {
+    ...state,
+    chinaPartners: (state.chinaPartners || []).filter((p) => p.id !== partnerId),
+    auditLogs: [log, ...state.auditLogs],
+    backups: prependBackupSnapshot(state.backups, backup),
+  };
+}
+
 export function exportStateToJSON(state: AppState): string {
   return JSON.stringify(
     {
@@ -2518,6 +2608,9 @@ export function parseImportedJSON(
     const backups = Array.isArray(candidate.backups)
       ? (candidate.backups as AppBackupSnapshot[])
       : [];
+    const chinaPartners = Array.isArray(candidate.chinaPartners)
+      ? (candidate.chinaPartners as ChinaPartner[])
+      : [];
     return {
       ok: true,
       state: {
@@ -2531,6 +2624,7 @@ export function parseImportedJSON(
         shareholders: candidate.shareholders,
         expenses: candidate.expenses,
         budgetItems: candidate.budgetItems,
+        chinaPartners,
         accounts,
         auditLogs,
         backups,

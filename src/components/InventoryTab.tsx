@@ -5,6 +5,7 @@ import {
   PackagePlus,
   Plus,
   RotateCcw,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
@@ -48,6 +49,7 @@ interface InventoryTabProps {
     patch: Omit<StockImport, 'id' | 'enteredBy'>
   ) => { ok: true } | { ok: false; error: string };
   onDeleteStockImport: (importId: string) => void;
+  onOpenAiExcelImport?: () => void;
 }
 
 export const InventoryTab: React.FC<InventoryTabProps> = ({
@@ -59,6 +61,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
   onAddStockImport,
   onUpdateStockImport,
   onDeleteStockImport,
+  onOpenAiExcelImport,
 }) => {
   const isAdmin = currentUser.role === 'Admin';
   const [brandFilter, setBrandFilter] = useState<'all' | Brand>('all');
@@ -234,6 +237,16 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {onOpenAiExcelImport && (
+            <button
+              type="button"
+              onClick={onOpenAiExcelImport}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:from-purple-700 hover:to-indigo-700 whitespace-nowrap shrink-0"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>✨ Nhập nhanh từ Excel (AI)</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => openImportModal()}
@@ -455,6 +468,7 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                   <th className="py-3 pr-3">Mã mẫu</th>
                   <th className="py-3 px-3">Tên mẫu</th>
                   <th className="py-3 px-3">Nhánh</th>
+                  <th className="py-3 px-3 text-right">Tổng đã nhập</th>
                   <th className="py-3 px-3">Tồn hiện tại theo Size</th>
                   <th className="py-3 px-3 text-right">Giá nhập</th>
                   <th className="py-3 px-3 text-right">Giá bán niêm yết</th>
@@ -463,6 +477,15 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
               </thead>
               <tbody className="divide-y divide-[#ECE7DD]">
                 {filteredProducts.map((p) => {
+                  const initialTotal = ALL_SIZES.reduce(
+                    (sum, s) => sum + (p.initialStock[s] ?? 0),
+                    0
+                  );
+                  const importTotal = state.stockImports
+                    .filter((imp) => imp.productId === p.id)
+                    .reduce((sum, imp) => sum + imp.quantity, 0);
+                  const totalImported = initialTotal + importTotal;
+
                   const sizes = getProductActiveSizes(p, state.stockImports, state.orders);
                   const stockSummary = sizes
                     .map(
@@ -497,6 +520,9 @@ export const InventoryTab: React.FC<InventoryTabProps> = ({
                       </td>
                       <td className="py-3 px-3 text-xs text-[#57605E] whitespace-nowrap">
                         {p.brand}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono font-semibold text-[#0D4F43] tabular-nums whitespace-nowrap">
+                        {totalImported} sp
                       </td>
                       <td className="py-3 px-3 font-mono text-xs text-[#57605E] tabular-nums whitespace-nowrap">
                         {stockSummary}
