@@ -14,7 +14,6 @@ import {
   Plus,
   Settings,
   ShoppingBag,
-  Sparkles,
   Star,
   Trash2,
   Upload,
@@ -22,6 +21,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
+import diamondAppAvatar from './assets/images/diamond_moss_icon_1795003396124.jpg';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
 import { AiExcelImportModal, AiImportMode } from './components/AiExcelImportModal';
 import { AuditLogTab } from './components/AuditLogTab';
@@ -1277,21 +1277,35 @@ export default function App() {
     );
   };
 
-  const renderAppIcon = (iconName?: string) => {
+  const renderAppIcon = (iconName?: string, size: 'sm' | 'md' = 'md') => {
+    const iconSizeClass = size === 'sm' ? 'h-4 w-4' : 'h-5 w-5';
+    const imgSizeClass =
+      size === 'sm'
+        ? 'h-6 w-6 rounded-lg border border-[#C99A4B]/50 bg-[#2C4832] object-cover shrink-0'
+        : 'h-9 w-9 rounded-xl border border-[#C99A4B]/50 bg-[#2C4832] object-cover shadow-xs shrink-0';
+
     switch (iconName) {
       case 'Flower':
-        return <Flower className="h-5 w-5 text-[#0D4F43]" />;
+        return <Flower className={`${iconSizeClass} text-[#0D4F43]`} />;
       case 'Crown':
-        return <Crown className="h-5 w-5 text-[#0D4F43]" />;
+        return <Crown className={`${iconSizeClass} text-[#0D4F43]`} />;
       case 'Gem':
-        return <Gem className="h-5 w-5 text-[#0D4F43]" />;
+        return <Gem className={`${iconSizeClass} text-[#0D4F43]`} />;
       case 'Leaf':
-        return <Leaf className="h-5 w-5 text-[#0D4F43]" />;
+        return <Leaf className={`${iconSizeClass} text-[#0D4F43]`} />;
       case 'Star':
-        return <Star className="h-5 w-5 text-[#0D4F43]" />;
+        return <Star className={`${iconSizeClass} text-[#0D4F43]`} />;
+      case 'DiamondMoss':
       case 'Sparkles':
       default:
-        return <Sparkles className="h-5 w-5 text-[#0D4F43]" />;
+        return (
+          <img
+            src={diamondAppAvatar}
+            alt="Biểu tượng Nhã Vương Miên"
+            referrerPolicy="no-referrer"
+            className={imgSizeClass}
+          />
+        );
     }
   };
 
@@ -1309,14 +1323,16 @@ export default function App() {
       <div>
         {/* Brand Wordmark */}
         <div className="border-b border-[#ECE7DD] pb-5">
-          <div className="flex items-center gap-2">
-            {renderAppIcon(state.appIcon)}
-            <div className="font-serif text-lg font-bold tracking-tight text-[#1A1F1E]">
-              Nhã Vương Miên
+          <div className="flex items-center gap-2.5">
+            {renderAppIcon(state.appIcon, 'md')}
+            <div>
+              <div className="font-serif text-lg font-bold tracking-tight text-[#1A1F1E]">
+                Nhã Vương Miên
+              </div>
+              <div className="mt-0.5 text-xs font-medium text-[#0D4F43]">
+                Tơ Nhã · Tơ Vương · Vân Miên
+              </div>
             </div>
-          </div>
-          <div className="mt-0.5 text-xs font-medium text-[#0D4F43]">
-            Tơ Nhã · Tơ Vương · Vân Miên
           </div>
         </div>
 
@@ -1460,6 +1476,7 @@ export default function App() {
               <Menu className="h-5 w-5" />
             </button>
             <div className="flex items-center gap-1.5 min-w-0">
+              <span className="lg:hidden shrink-0">{renderAppIcon(state.appIcon, 'sm')}</span>
               <span className="lg:hidden font-serif text-sm font-bold text-[#0D4F43] shrink-0">
                 Nhã Vương Miên
               </span>
@@ -1705,7 +1722,7 @@ export default function App() {
         currentUser={currentUser}
         accounts={state.accounts}
         hasSystemData={hasAnyData}
-        appIcon={state.appIcon || 'Sparkles'}
+        appIcon={state.appIcon || 'DiamondMoss'}
         onChangeAppIcon={handleUpdateAppIcon}
         onClose={() => setSettingsOpen(false)}
         onChangePin={handleChangePin}

@@ -548,7 +548,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
       },
     ],
     notifications: [],
-    appIcon: 'Sparkles',
+    appIcon: 'DiamondMoss',
   };
 }
 
@@ -569,6 +569,6 @@ export function createEmptyState(
     backups: existingBackups,
     chinaPartners: [],
     notifications: [],
-    appIcon: 'Sparkles',
+    appIcon: 'DiamondMoss',
   };
 }

@@ -1,24 +1,50 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Nhã Vương Miên — Kim cương vàng đồng trên nền xanh rêu">
   <defs>
-    <linearGradient id="jadeBg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#126657" />
-      <stop offset="100%" stop-color="#093B32" />
+    <linearGradient id="mossBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#35563C" />
+      <stop offset="55%" stop-color="#2C4832" />
+      <stop offset="100%" stop-color="#203725" />
     </linearGradient>
-    <linearGradient id="goldSilk" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#F7E7CE" />
-      <stop offset="50%" stop-color="#E5C07B" />
-      <stop offset="100%" stop-color="#FAF8F4" />
+    <linearGradient id="goldTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F6DDA0" />
+      <stop offset="55%" stop-color="#D7A857" />
+      <stop offset="100%" stop-color="#B68232" />
+    </linearGradient>
+    <linearGradient id="goldSideL" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E7C278" />
+      <stop offset="100%" stop-color="#9A6B25" />
+    </linearGradient>
+    <linearGradient id="goldSideR" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C99645" />
+      <stop offset="100%" stop-color="#7E531A" />
+    </linearGradient>
+    <linearGradient id="goldBase" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#DFB463" />
+      <stop offset="100%" stop-color="#8B5E20" />
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="108" fill="url(#jadeBg)" />
-  <circle cx="256" cy="256" r="186" fill="none" stroke="url(#goldSilk)" stroke-width="10" opacity="0.45" />
-  <circle cx="256" cy="256" r="164" fill="none" stroke="#FAF8F4" stroke-width="3" opacity="0.25" />
-  <!-- Stylized lotus / crown silk emblem -->
-  <path d="M256 122 C286 174 302 214 256 266 C210 214 226 174 256 122 Z" fill="url(#goldSilk)" />
-  <path d="M256 266 C204 242 158 214 146 168 C194 184 228 216 256 266 Z" fill="#FAF8F4" opacity="0.92" />
-  <path d="M256 266 C308 242 354 214 366 168 C318 184 284 216 256 266 Z" fill="#FAF8F4" opacity="0.92" />
-  <path d="M256 286 C198 282 152 264 132 232 C178 240 220 258 256 286 Z" fill="url(#goldSilk)" opacity="0.88" />
-  <path d="M256 286 C314 282 360 264 380 232 C334 240 292 258 256 286 Z" fill="url(#goldSilk)" opacity="0.88" />
-  <rect x="172" y="314" width="168" height="10" rx="5" fill="url(#goldSilk)" />
-  <text x="256" y="374" text-anchor="middle" font-family="Georgia, serif" font-size="42" font-weight="700" letter-spacing="4" fill="#FAF8F4">N3</text>
+
+  <rect width="512" height="512" rx="108" fill="url(#mossBg)" />
+  <rect x="20" y="20" width="472" height="472" rx="92" fill="none" stroke="#C99A4B" stroke-opacity="0.22" stroke-width="2" />
+
+  <!-- Faceted Bronze-Gold Diamond -->
+  <g stroke="#6B4414" stroke-width="2" stroke-linejoin="round">
+    <!-- Crown left & right outer facets -->
+    <polygon points="154,142 206,142 178,214 102,214" fill="url(#goldSideL)" />
+    <polygon points="306,142 358,142 410,214 334,214" fill="url(#goldSideR)" />
+    <!-- Crown inner facets -->
+    <polygon points="206,142 256,142 214,214 178,214" fill="#F0CF87" />
+    <polygon points="256,142 306,142 334,214 298,214" fill="#C99848" />
+    <!-- Crown center table -->
+    <polygon points="206,142 306,142 298,214 214,214" fill="url(#goldTop)" />
+
+    <!-- Pavilion outer left & right facets -->
+    <polygon points="102,214 178,214 256,392" fill="url(#goldSideL)" />
+    <polygon points="334,214 410,214 256,392" fill="#7D531B" />
+    <!-- Pavilion inner left & right facets -->
+    <polygon points="178,214 214,214 256,392" fill="#E4BA6C" />
+    <polygon points="298,214 334,214 256,392" fill="#9E6E28" />
+    <!-- Pavilion center facet -->
+    <polygon points="214,214 298,214 256,392" fill="url(#goldBase)" />
+  </g>
 </svg>

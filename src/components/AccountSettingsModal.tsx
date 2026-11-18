@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { getDefaultPinForAccount } from '../data/seedData';
+import diamondAppAvatar from '../assets/images/diamond_moss_icon_1795003396124.jpg';
 import { BrowserNotificationPermission } from '../hooks/usePWA';
 import { UserAccount, UserRole } from '../types/erp';
 import {
@@ -81,7 +82,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   onUpdateAccount,
   onDeleteAccount,
   onRequestResetSystem,
-  appIcon = 'Sparkles',
+  appIcon = 'DiamondMoss',
   onChangeAppIcon,
   notificationPermission = 'default',
   isIOS = false,
@@ -527,26 +528,32 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               <section className="mt-6 border-t border-[#ECE7DD] pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">
-                      <Sparkles className="h-4 w-4 text-[#0D4F43]" />
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-[#1A1F1E]">
+                      <img
+                        src={diamondAppAvatar}
+                        alt="Biểu tượng Nhã Vương Miên"
+                        referrerPolicy="no-referrer"
+                        className="h-5 w-5 rounded-md border border-[#C99A4B]/50 bg-[#2C4832] object-cover"
+                      />
                       Biểu tượng đại diện ứng dụng
                     </h3>
                     <p className="mt-0.5 text-xs text-[#57605E]">
-                      Chọn biểu tượng đồng bộ với tiêu đề thanh điều hướng của xưởng.
+                      Chọn hình đại diện đồng bộ với tiêu đề thanh điều hướng của xưởng.
                     </p>
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
-                    { id: 'Sparkles', label: 'Tia sáng', icon: Sparkles },
+                    { id: 'DiamondMoss', label: 'Kim cương vàng đồng', isBrandAvatar: true },
                     { id: 'Flower', label: 'Bông hoa', icon: Flower },
                     { id: 'Crown', label: 'Vương miện', icon: Crown },
                     { id: 'Gem', label: 'Viên ngọc', icon: Gem },
                     { id: 'Leaf', label: 'Chiếc lá', icon: Leaf },
                     { id: 'Star', label: 'Ngôi sao', icon: Star },
                   ].map((item) => {
+                    const effectiveIcon = !appIcon || appIcon === 'Sparkles' ? 'DiamondMoss' : appIcon;
+                    const isSelected = effectiveIcon === item.id;
                     const IconComp = item.icon;
-                    const isSelected = (appIcon || 'Sparkles') === item.id;
                     return (
                       <button
                         key={item.id}
@@ -558,7 +565,16 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                             : 'border-[#E4DFD5] bg-white text-[#57605E] hover:bg-[#FAF8F4]'
                         }`}
                       >
-                        <IconComp className="h-4 w-4" />
+                        {item.isBrandAvatar ? (
+                          <img
+                            src={diamondAppAvatar}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                            className="h-4 w-4 rounded-sm border border-[#C99A4B]/50 bg-[#2C4832] object-cover"
+                          />
+                        ) : (
+                          IconComp && <IconComp className="h-4 w-4" />
+                        )}
                         <span>{item.label}</span>
                       </button>
                     );

@@ -10,6 +10,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { UserAccount } from '../types/erp';
+import diamondAppAvatar from '../assets/images/diamond_moss_icon_1795003396124.jpg';
 
 interface LoginScreenProps {
   accounts: UserAccount[];
@@ -81,11 +82,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         {/* Left column: Brand & Studio Context */}
         <div className="flex flex-col justify-between border-b border-[#ECE7DD] bg-[#F6F2EA] p-8 lg:col-span-5 lg:border-b-0 lg:border-r">
           <div>
-            <div className="font-serif text-2xl font-bold tracking-tight text-[#1A1F1E]">
-              Nhã Vương Miên
-            </div>
-            <div className="mt-1 text-sm font-medium text-[#0D4F43]">
-              Tơ Nhã · Tơ Vương · Vân Miên
+            <div className="flex items-center gap-3">
+              <img
+                src={diamondAppAvatar}
+                alt="Biểu tượng Nhã Vương Miên"
+                referrerPolicy="no-referrer"
+                className="h-12 w-12 shrink-0 rounded-xl border border-[#C99A4B]/50 bg-[#2C4832] object-cover shadow-sm"
+              />
+              <div>
+                <div className="font-serif text-2xl font-bold tracking-tight text-[#1A1F1E]">
+                  Nhã Vương Miên
+                </div>
+                <div className="mt-0.5 text-sm font-medium text-[#0D4F43]">
+                  Tơ Nhã · Tơ Vương · Vân Miên
+                </div>
+              </div>
             </div>
             <p className="mt-6 text-sm leading-relaxed text-[#57605E]">
               Hệ thống quản lý bán hàng, tồn kho, tài chính và lịch sử thao tác đồng bộ thời gian thực trên Cloud Firestore cho đội ngũ 5 thành viên.

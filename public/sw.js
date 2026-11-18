@@ -1,5 +1,5 @@
 /* eslint-disable no-restricted-globals */
-const CACHE_NAME = 'nvm-pwa-shell-v2';
+const CACHE_NAME = 'nvm-pwa-shell-v3';
 const APP_SHELL_URLS = [
   '/',
   '/index.html',

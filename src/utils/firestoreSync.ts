@@ -266,7 +266,7 @@ export function subscribeWorkspaceRealtime(
   };
 
   let isSampleData = false;
-  let appIcon = 'Sparkles';
+  let appIcon = 'DiamondMoss';
   const readySet = new Set<string>();
   const expectedCount = BUSINESS_COLLECTIONS.length + 1;
   let notifiedReady = false;
@@ -353,7 +353,7 @@ export function subscribeWorkspaceRealtime(
           });
           isSampleData = Boolean(raw.isSampleData);
           if (typeof raw.appIcon === 'string' && raw.appIcon.trim()) {
-            appIcon = raw.appIcon;
+            appIcon = raw.appIcon === 'Sparkles' ? 'DiamondMoss' : raw.appIcon;
           }
         }
         readySet.add('system');
@@ -474,7 +474,7 @@ export async function commitStateDiffToFirestore(
         id: SYSTEM_META_DOC_ID,
         workspaceId: WORKSPACE_ID,
         isSampleData: Boolean(nextState.isSampleData),
-        appIcon: nextState.appIcon || 'Sparkles',
+        appIcon: nextState.appIcon || 'DiamondMoss',
         seeded: true,
         serverCreatedAt: sysCreated,
         serverUpdatedAt: nowServerTs,
