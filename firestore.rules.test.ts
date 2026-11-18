@@ -102,6 +102,7 @@ test('firestore.rules and firebase-blueprint.json stay synchronized and enforce 
     'auditLogs',
     'backups',
     'chinaPartners',
+    'notifications',
   ];
 
   assert.ok(rulesText.includes('allow read, write: if false;'));

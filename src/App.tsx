@@ -19,6 +19,7 @@ import {
   Trash2,
   Upload,
   Wallet,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { AccountSettingsModal } from './components/AccountSettingsModal';
@@ -30,14 +31,19 @@ import { DashboardTab } from './components/DashboardTab';
 import { FinanceTab } from './components/FinanceTab';
 import { InventoryTab } from './components/InventoryTab';
 import { LoginScreen } from './components/LoginScreen';
+import { NotificationCenter } from './components/NotificationCenter';
+import { NotificationToast } from './components/NotificationToast';
 import { OrderExportFormat, OrderExportMode } from './components/OrderExportModal';
 import { OrdersTab } from './components/OrdersTab';
 import { createEmptyState } from './data/seedData';
+import { notificationTypeToTab, usePWA } from './hooks/usePWA';
 import {
   AppBackupSnapshot,
+  AppNotification,
   AppState,
   AuditLogEntry,
   Expense,
+  NotificationType,
   Order,
   PaymentStatus,
   Product,
@@ -57,12 +63,14 @@ import {
   addExpenseWithAudit,
   addShareholderWithAudit,
   addStockImportWithAudit,
+  appendNotificationToState,
   archiveProductWithAudit,
   authenticateUser,
   cancelOrder,
   changeUserPinWithAudit,
   computeBrandPnL,
   confirmOrderPayment,
+  createAppNotification,
   createOrderWithValidation,
   createUserAccountWithAudit,
   deleteExpenseWithAudit,
@@ -77,10 +85,14 @@ import {
   exportPnLToCSV,
   exportStateToJSON,
   exportViettelPostCSV,
+  formatCompactVND,
   formatDateVN,
   formatVND,
+  getOrderTotal,
   getShippingMethodSlug,
   getTodayISO,
+  markAllNotificationsReadInState,
+  markNotificationReadInState,
   markOrdersShippingStatus,
   OrderDraftInput,
   OrderShippingUpdate,
@@ -98,6 +110,11 @@ import {
   updateStockImportWithValidation,
   updateUserAccountWithAudit,
 } from './utils/finance';
+import {
+  getNotificationSoundEnabled,
+  playNotificationChime,
+  setNotificationSoundEnabled,
+} from './utils/sound';
 import {
   downloadFinanceXLSX,
   downloadOrderRecipientsXLSX,
@@ -202,7 +219,23 @@ export default function App() {
   });
   const currentUserIdRef = useRef<string | null>(currentUserId);
 
-  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    try {
+      const tabParam = new URLSearchParams(window.location.search).get('tab');
+      if (
+        tabParam === 'dashboard' ||
+        tabParam === 'orders' ||
+        tabParam === 'inventory' ||
+        tabParam === 'finance' ||
+        tabParam === 'audit'
+      ) {
+        return tabParam;
+      }
+    } catch {
+      // Ignore URL errors
+    }
+    return 'dashboard';
+  });
   const [isOrderCreateOpen, setIsOrderCreateOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
@@ -212,7 +245,24 @@ export default function App() {
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(
     null
   );
+  const [toastNotifications, setToastNotifications] = useState<AppNotification[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(getNotificationSoundEnabled);
+  const soundEnabledRef = useRef(soundEnabled);
+  const appSessionStartRef = useRef<string>(new Date().toISOString());
+  const seenNotificationIdsRef = useRef<Set<string>>(new Set());
+  const initialNotificationsLoadedRef = useRef<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const pwa = usePWA({
+    onNotificationNavigate: (tab) => setActiveTab(tab),
+  });
+  const showSystemNotificationRef = useRef(pwa.showSystemNotification);
+  showSystemNotificationRef.current = pwa.showSystemNotification;
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+    setNotificationSoundEnabled(soundEnabled);
+  }, [soundEnabled]);
 
   if (fatalError) {
     throw fatalError;
@@ -240,6 +290,7 @@ export default function App() {
     const connectFirestore = async () => {
       setFirestoreLoading(true);
       setStartupError(null);
+      initialNotificationsLoadedRef.current = false;
       try {
         await ensureAnonymousAuth();
         if (cancelled) return;
@@ -259,6 +310,45 @@ export default function App() {
             stateRef.current = nextState;
             setState(nextState);
 
+            // Process incoming real-time notifications from teammates
+            const allNotifications = nextState.notifications ?? [];
+            if (!initialNotificationsLoadedRef.current) {
+              for (const n of allNotifications) {
+                seenNotificationIdsRef.current.add(n.id);
+              }
+            } else {
+              const incomingNew: AppNotification[] = [];
+              for (const n of allNotifications) {
+                if (!seenNotificationIdsRef.current.has(n.id)) {
+                  seenNotificationIdsRef.current.add(n.id);
+                  const activeUserId = currentUserIdRef.current;
+                  if (
+                    activeUserId &&
+                    n.actorId !== activeUserId &&
+                    n.createdAt >= appSessionStartRef.current
+                  ) {
+                    incomingNew.push(n);
+                  }
+                }
+              }
+
+              if (incomingNew.length > 0) {
+                setToastNotifications((prev) => [...incomingNew, ...prev].slice(0, 3));
+                for (const item of incomingNew) {
+                  window.setTimeout(() => {
+                    setToastNotifications((prev) => prev.filter((t) => t.id !== item.id));
+                  }, 7000);
+                  void showSystemNotificationRef.current(item.title, item.message, {
+                    tag: item.id,
+                    tab: notificationTypeToTab(item.type),
+                  });
+                }
+                if (soundEnabledRef.current) {
+                  playNotificationChime();
+                }
+              }
+            }
+
             if (nextState.accounts.length > 0) {
               const activeId = currentUserIdRef.current;
               if (!activeId) {
@@ -273,6 +363,10 @@ export default function App() {
           },
           onReady: () => {
             if (!cancelled) {
+              for (const n of stateRef.current.notifications ?? []) {
+                seenNotificationIdsRef.current.add(n.id);
+              }
+              initialNotificationsLoadedRef.current = true;
               setStartupError(null);
               setFirestoreLoading(false);
             }
@@ -367,6 +461,36 @@ export default function App() {
     role: currentUser.role,
   };
 
+  const withNotification = (
+    targetState: AppState,
+    type: NotificationType,
+    title: string,
+    message: string
+  ): AppState => {
+    const notif = createAppNotification({ title, message, type, actor });
+    seenNotificationIdsRef.current.add(notif.id);
+    return appendNotificationToState(targetState, notif);
+  };
+
+  const handleMarkNotificationRead = (notificationId: string) => {
+    commitNextState((prev) => markNotificationReadInState(prev, notificationId, currentUser.id));
+  };
+
+  const handleMarkAllNotificationsRead = () => {
+    commitNextState((prev) => markAllNotificationsReadInState(prev, currentUser.id));
+  };
+
+  const handleSendTestNotification = () => {
+    if (soundEnabled) {
+      playNotificationChime();
+    }
+    void pwa.showSystemNotification(
+      'Nhà Năn Niên - Thông báo thử',
+      `Xin chào ${currentUser.name}, thông báo đẩy trên thiết bị này đã sẵn sàng hoạt động!`,
+      { tag: 'n3-test-notification', tab: 'dashboard' }
+    );
+  };
+
   const handleOpenNewOrder = () => {
     setActiveTab('orders');
     setIsOrderCreateOpen(true);
@@ -380,7 +504,15 @@ export default function App() {
     if (!result.ok) {
       return result;
     }
-    commitNextState(result.state);
+    const orderTotal = formatCompactVND(getOrderTotal(result.order));
+    commitNextState(
+      withNotification(
+        result.state,
+        'order',
+        `Đơn hàng mới #${result.order.code}`,
+        `${actor.name} vừa tạo đơn hàng #${result.order.code} (${result.order.customerName} - ${orderTotal})`
+      )
+    );
     const hasShipCost = result.order.shopShippingCost > 0;
     showNotice(
       hasShipCost
@@ -398,7 +530,15 @@ export default function App() {
     if (!result.ok) {
       return result;
     }
-    commitNextState(result.state);
+    const orderTotal = formatCompactVND(getOrderTotal(result.order));
+    commitNextState(
+      withNotification(
+        result.state,
+        'order',
+        `Sửa đơn hàng #${result.order.code}`,
+        `${actor.name} vừa chỉnh sửa đơn hàng #${result.order.code} (${result.order.customerName} - ${orderTotal})`
+      )
+    );
     showNotice(
       `Đã cập nhật đơn hàng ${result.order.code}, tự động cân đối lại tồn kho và đồng bộ Firestore.`
     );
@@ -407,26 +547,65 @@ export default function App() {
 
   const handleDeleteOrder = (orderId: string) => {
     const target = stateRef.current.orders.find((o) => o.id === orderId);
-    commitNextState((prev) => deleteOrderWithAudit(prev, orderId, actor));
+    commitNextState((prev) => {
+      const next = deleteOrderWithAudit(prev, orderId, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'order',
+        `Xóa đơn hàng #${target.code}`,
+        `${actor.name} vừa xóa đơn hàng #${target.code} (${target.customerName})`
+      );
+    });
     showNotice(
       `Đã xóa đơn hàng ${target?.code ?? ''}, hoàn lại tồn kho và tự động lưu bản sao lưu khôi phục.`
     );
   };
 
   const handleConfirmPayment = (orderId: string) => {
-    commitNextState((prev) => confirmOrderPayment(prev, orderId, actor));
+    const target = stateRef.current.orders.find((o) => o.id === orderId);
+    commitNextState((prev) => {
+      const next = confirmOrderPayment(prev, orderId, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'order',
+        `Xác nhận thanh toán #${target.code}`,
+        `${actor.name} vừa xác nhận ĐÃ THANH TOÁN đơn #${target.code} (${target.customerName} - ${formatCompactVND(getOrderTotal(target))})`
+      );
+    });
     showNotice(`Đã xác nhận thanh toán bởi ${actor.name} (COD cập nhật về 0 đ).`);
   };
 
   const handleCancelOrder = (orderId: string) => {
-    commitNextState((prev) => cancelOrder(prev, orderId, actor));
+    const target = stateRef.current.orders.find((o) => o.id === orderId);
+    commitNextState((prev) => {
+      const next = cancelOrder(prev, orderId, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'order',
+        `Hủy đơn hàng #${target.code}`,
+        `${actor.name} vừa hủy đơn hàng #${target.code} (${target.customerName})`
+      );
+    });
     showNotice(
       `Đã hủy đơn hàng bởi ${actor.name}, hoàn lại tồn kho và xóa khoản chi cước vận chuyển liên kết.`
     );
   };
 
   const handleUpdateOrderShipping = (orderId: string, patch: OrderShippingUpdate) => {
-    commitNextState((prev) => updateOrderShipping(prev, orderId, patch, actor));
+    const target = stateRef.current.orders.find((o) => o.id === orderId);
+    commitNextState((prev) => {
+      const next = updateOrderShipping(prev, orderId, patch, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'order',
+        `Cập nhật vận chuyển #${target.code}`,
+        `${actor.name} vừa cập nhật vận chuyển đơn #${target.code}${patch.shippingStatus ? ` (${patch.shippingStatus})` : ''}`
+      );
+    });
     if (patch.shopShippingCost !== undefined) {
       showNotice(
         patch.shopShippingCost > 0
@@ -439,7 +618,16 @@ export default function App() {
   };
 
   const handleMarkOrdersShippingStatus = (orderIds: string[], status: ShippingStatus) => {
-    commitNextState((prev) => markOrdersShippingStatus(prev, orderIds, status, actor));
+    commitNextState((prev) => {
+      const next = markOrdersShippingStatus(prev, orderIds, status, actor);
+      if (next === prev) return next;
+      return withNotification(
+        next,
+        'order',
+        'Cập nhật trạng thái vận chuyển',
+        `${actor.name} vừa chuyển ${orderIds.length} đơn sang trạng thái "${status}"`
+      );
+    });
     showNotice(`Đã chuyển ${orderIds.length} đơn sang trạng thái "${status}".`);
   };
 
@@ -460,7 +648,22 @@ export default function App() {
     if (!res.ok) {
       return res;
     }
-    commitNextState(res.state);
+    const notifTitle = productInput.id
+      ? res.hasStockAdjustment
+        ? `Điều chỉnh tồn kho ${res.product.code}`
+        : `Cập nhật mẫu ${res.product.code}`
+      : `Thêm mẫu mới ${res.product.code}`;
+    const notifMsg = productInput.id
+      ? res.hasStockAdjustment
+        ? `${actor.name} vừa điều chỉnh tồn kho mẫu ${res.product.code} (${res.product.name})`
+        : `${actor.name} vừa chỉnh sửa thông tin mẫu ${res.product.code} (${res.product.name})`
+      : `${actor.name} vừa thêm mẫu sản phẩm mới ${res.product.code} · ${res.product.name}`;
+
+    commitNextState(
+      res.state === stateRef.current
+        ? res.state
+        : withNotification(res.state, 'inventory', notifTitle, notifMsg)
+    );
     if (productInput.id) {
       showNotice(
         res.hasStockAdjustment
@@ -474,12 +677,22 @@ export default function App() {
   };
 
   const handleArchiveProduct = (productId: string, archive: boolean) => {
+    const target = stateRef.current.products.find((p) => p.id === productId);
     const res = archiveProductWithAudit(stateRef.current, productId, archive, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    commitNextState(res.state);
+    commitNextState(
+      res.state === stateRef.current || !target
+        ? res.state
+        : withNotification(
+            res.state,
+            'inventory',
+            archive ? `Ngừng bán ${target.code}` : `Mở bán lại ${target.code}`,
+            `${actor.name} vừa ${archive ? 'ngừng kinh doanh' : 'mở bán lại'} mẫu ${target.code} (${target.name})`
+          )
+    );
     showNotice(
       archive
         ? 'Đã chuyển mẫu sang Ngừng kinh doanh (ẩn khỏi đơn mới, giữ nguyên số liệu báo cáo cũ).'
@@ -488,12 +701,22 @@ export default function App() {
   };
 
   const handleDeleteProduct = (productId: string) => {
+    const target = stateRef.current.products.find((p) => p.id === productId);
     const res = deleteProductWithAudit(stateRef.current, productId, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    commitNextState(res.state);
+    commitNextState(
+      target
+        ? withNotification(
+            res.state,
+            'inventory',
+            `Xóa mẫu ${target.code}`,
+            `${actor.name} vừa xóa mẫu ${target.code} (${target.name}) khỏi kho hàng`
+          )
+        : res.state
+    );
     showNotice('Đã xóa mẫu sản phẩm khỏi danh mục kho hàng (đã lưu bản sao lưu khôi phục).');
   };
 
@@ -501,7 +724,18 @@ export default function App() {
     imp: Omit<StockImport, 'id' | 'enteredBy'>,
     alsoRecordCashExpense: boolean
   ) => {
-    commitNextState((prev) => addStockImportWithAudit(prev, imp, alsoRecordCashExpense, actor));
+    const product = stateRef.current.products.find((p) => p.id === imp.productId);
+    commitNextState((prev) => {
+      const next = addStockImportWithAudit(prev, imp, alsoRecordCashExpense, actor);
+      return withNotification(
+        next,
+        'inventory',
+        'Nhập kho mới',
+        `${actor.name} vừa nhập kho +${imp.quantity} ${
+          product ? `${product.code} · ${product.name}` : 'sản phẩm'
+        } (Size ${imp.size})`
+      );
+    });
     showNotice(`Đã nhập kho mới (${actor.name}) và cập nhật Tổng giá nhập.`);
   };
 
@@ -511,18 +745,47 @@ export default function App() {
   ): { ok: true } | { ok: false; error: string } => {
     const res = updateStockImportWithValidation(stateRef.current, importId, patch, actor);
     if (!res.ok) return res;
-    commitNextState(res.state);
+    const product = stateRef.current.products.find((p) => p.id === patch.productId);
+    commitNextState(
+      withNotification(
+        res.state,
+        'inventory',
+        'Cập nhật phiếu nhập kho',
+        `${actor.name} vừa sửa phiếu nhập kho ${product ? `${product.code} (${patch.size})` : ''} · SL ${patch.quantity}`
+      )
+    );
     showNotice('Đã cập nhật phiếu nhập kho, tồn kho và Tổng giá nhập.');
     return { ok: true };
   };
 
   const handleDeleteStockImport = (importId: string) => {
-    commitNextState((prev) => deleteStockImportWithAudit(prev, importId, actor));
+    const target = stateRef.current.stockImports.find((i) => i.id === importId);
+    const product = target
+      ? stateRef.current.products.find((p) => p.id === target.productId)
+      : undefined;
+    commitNextState((prev) => {
+      const next = deleteStockImportWithAudit(prev, importId, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'inventory',
+        'Xóa phiếu nhập kho',
+        `${actor.name} vừa xóa phiếu nhập +${target.quantity} ${product ? product.code : ''} (${target.size})`
+      );
+    });
     showNotice('Đã xóa phiếu nhập kho, cân đối lại tồn kho và tự động lưu bản sao lưu.');
   };
 
   const handleAddShareholder = (sh: Omit<Shareholder, 'id'>) => {
-    commitNextState((prev) => addShareholderWithAudit(prev, sh, actor));
+    commitNextState((prev) => {
+      const next = addShareholderWithAudit(prev, sh, actor);
+      return withNotification(
+        next,
+        'finance',
+        'Thêm vốn góp cổ đông',
+        `${actor.name} vừa thêm vốn góp của ${sh.name} (${formatCompactVND(sh.contribution)})`
+      );
+    });
     showNotice(`Đã thêm cổ đông ${sh.name}.`);
   };
 
@@ -530,41 +793,99 @@ export default function App() {
     id: string,
     patch: Partial<Pick<Shareholder, 'name' | 'contribution' | 'note'>>
   ) => {
-    commitNextState((prev) => updateShareholderWithAudit(prev, id, patch, actor));
+    const target = stateRef.current.shareholders.find((s) => s.id === id);
+    commitNextState((prev) => {
+      const next = updateShareholderWithAudit(prev, id, patch, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'finance',
+        'Cập nhật vốn góp',
+        `${actor.name} vừa sửa vốn góp của ${patch.name ?? target.name} (${formatCompactVND(patch.contribution ?? target.contribution)})`
+      );
+    });
     showNotice('Đã cập nhật vốn góp cổ đông và ghi lại giá trị cũ → mới vào Lịch sử.');
   };
 
   const handleDeleteShareholder = (id: string) => {
+    const target = stateRef.current.shareholders.find((s) => s.id === id);
     const res = deleteShareholderWithAudit(stateRef.current, id, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    commitNextState(res.state);
+    commitNextState(
+      target
+        ? withNotification(
+            res.state,
+            'finance',
+            'Xóa cổ đông góp vốn',
+            `${actor.name} vừa xóa cổ đông ${target.name} khỏi danh sách góp vốn`
+          )
+        : res.state
+    );
     showNotice('Đã xóa cổ đông khỏi danh sách góp vốn (đã lưu bản sao lưu khôi phục).');
   };
 
   const handleAddExpense = (exp: Omit<Expense, 'id' | 'enteredBy'>) => {
-    commitNextState((prev) => addExpenseWithAudit(prev, exp, actor));
+    commitNextState((prev) => {
+      const next = addExpenseWithAudit(prev, exp, actor);
+      return withNotification(
+        next,
+        'finance',
+        'Khoản chi mới',
+        `${actor.name} vừa thêm khoản chi ${exp.category} ${formatCompactVND(exp.amount)} (${exp.detail})`
+      );
+    });
     showNotice(`Đã ghi nhận khoản chi mới (${actor.name}) vào Quỹ tiền mặt.`);
   };
 
   const handleUpdateExpense = (id: string, patch: ExpenseUpdatePatch) => {
-    commitNextState((prev) => updateExpenseWithAudit(prev, id, patch, actor));
+    const target = stateRef.current.expenses.find((e) => e.id === id);
+    commitNextState((prev) => {
+      const next = updateExpenseWithAudit(prev, id, patch, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'finance',
+        'Sửa khoản chi',
+        `${actor.name} vừa sửa khoản chi '${patch.detail ?? target.detail}' (${formatCompactVND(patch.amount ?? target.amount)})`
+      );
+    });
     showNotice('Đã cập nhật khoản chi và lưu vết giá trị cũ → mới vào Lịch sử thao tác.');
   };
 
   const handleToggleExpenseStatus = (id: string) => {
-    commitNextState((prev) => toggleExpenseStatus(prev, id, actor));
+    const target = stateRef.current.expenses.find((e) => e.id === id);
+    commitNextState((prev) => {
+      const next = toggleExpenseStatus(prev, id, actor);
+      if (next === prev || !target) return next;
+      return withNotification(
+        next,
+        'finance',
+        'Đổi trạng thái khoản chi',
+        `${actor.name} vừa cập nhật trạng thái khoản chi '${target.detail}'`
+      );
+    });
   };
 
   const handleDeleteExpense = (id: string) => {
+    const target = stateRef.current.expenses.find((e) => e.id === id);
     const res = deleteExpenseWithAudit(stateRef.current, id, actor);
     if (!res.ok) {
       showNotice(res.error, 'error');
       return;
     }
-    commitNextState(res.state);
+    commitNextState(
+      target
+        ? withNotification(
+            res.state,
+            'finance',
+            'Xóa khoản chi',
+            `${actor.name} vừa xóa khoản chi '${target.detail}' (${formatCompactVND(target.amount)})`
+          )
+        : res.state
+    );
     showNotice('Đã xóa khoản chi, đồng bộ lại Quỹ tiền mặt và tự động lưu bản sao lưu.');
   };
 
@@ -758,6 +1079,7 @@ export default function App() {
       ...backup.snapshot,
       auditLogs: stateRef.current.auditLogs,
       backups: [],
+      notifications: [],
       isSampleData: false,
     };
     triggerDownload(
@@ -804,11 +1126,19 @@ export default function App() {
       )}) từ Excel/Sheets.`,
     };
 
-    commitNextState((prev: AppState) => ({
-      ...prev,
-      expenses: [...newExpenses, ...prev.expenses],
-      auditLogs: [auditEntry, ...prev.auditLogs],
-    }));
+    const totalAiExpenses = extracted.reduce((sum, e) => sum + e.amount, 0);
+    commitNextState((prev: AppState) =>
+      withNotification(
+        {
+          ...prev,
+          expenses: [...newExpenses, ...prev.expenses],
+          auditLogs: [auditEntry, ...prev.auditLogs],
+        },
+        'finance',
+        `Nhập ${extracted.length} khoản chi bằng AI`,
+        `${actor.name} vừa nhập ${extracted.length} khoản chi (${formatCompactVND(totalAiExpenses)}) từ Excel/AI`
+      )
+    );
 
     showNotice(
       `Đã nạp thành công ${extracted.length} khoản chi phí từ bảng tính vào sổ quỹ và đồng bộ Firestore.`
@@ -885,11 +1215,18 @@ export default function App() {
       detail: `${actor.name} đã dùng Gemini AI nhập hàng loạt ${extracted.length} đơn hàng từ bảng tính Excel/Sheets.`,
     };
 
-    commitNextState((prev: AppState) => ({
-      ...prev,
-      orders: [...newOrders, ...prev.orders],
-      auditLogs: [auditEntry, ...prev.auditLogs],
-    }));
+    commitNextState((prev: AppState) =>
+      withNotification(
+        {
+          ...prev,
+          orders: [...newOrders, ...prev.orders],
+          auditLogs: [auditEntry, ...prev.auditLogs],
+        },
+        'order',
+        `Nhập ${extracted.length} đơn hàng bằng AI`,
+        `${actor.name} vừa thêm ${extracted.length} đơn hàng mới từ bảng tính Excel/AI`
+      )
+    );
 
     showNotice(
       `Đã nạp thành công ${extracted.length} đơn hàng từ bảng tính vào hệ thống và đồng bộ Firestore.`
@@ -922,11 +1259,18 @@ export default function App() {
       detail: `${actor.name} đã dùng Gemini AI nạp danh mục ${extracted.length} mẫu sản phẩm vào kho hàng.`,
     };
 
-    commitNextState((prev: AppState) => ({
-      ...prev,
-      products: [...prev.products, ...newProducts],
-      auditLogs: [auditEntry, ...prev.auditLogs],
-    }));
+    commitNextState((prev: AppState) =>
+      withNotification(
+        {
+          ...prev,
+          products: [...prev.products, ...newProducts],
+          auditLogs: [auditEntry, ...prev.auditLogs],
+        },
+        'inventory',
+        `Nạp ${extracted.length} mẫu kho bằng AI`,
+        `${actor.name} vừa nạp danh mục ${extracted.length} mẫu sản phẩm mới vào kho`
+      )
+    );
 
     showNotice(
       `Đã nạp thành công ${extracted.length} mẫu sản phẩm vào danh mục kho và đồng bộ Firestore.`
@@ -1124,6 +1468,16 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {!pwa.isOnline && (
+              <span
+                title="Đang mất kết nối mạng - dữ liệu sẽ tự đồng bộ khi có mạng lại"
+                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 whitespace-nowrap"
+              >
+                <WifiOff className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Ngoại tuyến</span>
+              </span>
+            )}
+
             <button
               type="button"
               onClick={() => setSettingsOpen(true)}
@@ -1138,6 +1492,23 @@ export default function App() {
                 {currentUser.role === 'Admin' ? 'Quản lý' : 'Thành viên'}
               </span>
             </button>
+
+            <NotificationCenter
+              notifications={state.notifications ?? []}
+              currentUserId={currentUser.id}
+              soundEnabled={soundEnabled}
+              onToggleSound={() => setSoundEnabled((prev) => !prev)}
+              onMarkRead={handleMarkNotificationRead}
+              onMarkAllRead={handleMarkAllNotificationsRead}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              notificationPermission={pwa.notificationPermission}
+              isIOS={pwa.isIOS}
+              isInstalled={pwa.isInstalled}
+              canInstallPrompt={pwa.canInstallPrompt}
+              onRequestPermission={pwa.requestNotificationPermission}
+              onInstallApp={pwa.installApp}
+              onSendTestNotification={handleSendTestNotification}
+            />
 
             <button
               type="button"
@@ -1334,6 +1705,25 @@ export default function App() {
         onUpdateAccount={handleUpdateAccount}
         onDeleteAccount={handleDeleteAccount}
         onRequestResetSystem={() => setConfirmClearOpen(true)}
+        notificationPermission={pwa.notificationPermission}
+        isIOS={pwa.isIOS}
+        isInstalled={pwa.isInstalled}
+        canInstallPrompt={pwa.canInstallPrompt}
+        soundEnabled={soundEnabled}
+        onToggleSound={() => setSoundEnabled((prev) => !prev)}
+        onRequestNotificationPermission={pwa.requestNotificationPermission}
+        onInstallApp={pwa.installApp}
+        onSendTestNotification={handleSendTestNotification}
+      />
+
+      <NotificationToast
+        items={toastNotifications}
+        onDismiss={(id) => setToastNotifications((prev) => prev.filter((t) => t.id !== id))}
+        onSelect={(item, tab) => {
+          handleMarkNotificationRead(item.id);
+          setActiveTab(tab);
+          setToastNotifications((prev) => prev.filter((t) => t.id !== item.id));
+        }}
       />
     </div>
   );

@@ -15,6 +15,7 @@ import { createDefaultAccounts, getDefaultPinForAccount } from '../data/seedData
 import { db } from '../firebase';
 import {
   AppBackupSnapshot,
+  AppNotification,
   AppState,
   AuditLogEntry,
   BudgetItem,
@@ -261,6 +262,7 @@ export function subscribeWorkspaceRealtime(
     auditLogs: [],
     backups: [],
     chinaPartners: [],
+    notifications: [],
   };
 
   let isSampleData = false;
@@ -291,6 +293,9 @@ export function subscribeWorkspaceRealtime(
     const sortedChinaPartners = [...(latestCollections.chinaPartners as Array<{ name: string }>)].sort((a, b) =>
       a.name.localeCompare(b.name)
     );
+    const sortedNotifications = [...(latestCollections.notifications as AppNotification[])].sort(
+      (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')
+    );
     const TEAM_ORDER: Record<string, number> = {
       ngan: 0,
       giang: 1,
@@ -316,6 +321,7 @@ export function subscribeWorkspaceRealtime(
       auditLogs: sortedLogs,
       backups: sortedBackups,
       chinaPartners: sortedChinaPartners as any,
+      notifications: sortedNotifications,
       appIcon,
       isSampleData,
     };

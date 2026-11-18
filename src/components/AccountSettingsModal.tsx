@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Bell,
+  BellOff,
   Crown,
+  Download,
   Edit3,
   ExternalLink,
   Eye,
@@ -11,14 +14,18 @@ import {
   Leaf,
   Loader2,
   RotateCcw,
+  Share2,
   ShieldCheck,
   Sparkles,
   Star,
   Trash2,
   UserPlus,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { getDefaultPinForAccount } from '../data/seedData';
+import { BrowserNotificationPermission } from '../hooks/usePWA';
 import { UserAccount, UserRole } from '../types/erp';
 import {
   getGeminiApiKey,
@@ -52,6 +59,15 @@ interface AccountSettingsModalProps {
   onRequestResetSystem?: () => void;
   appIcon?: string;
   onChangeAppIcon?: (icon: string) => void;
+  notificationPermission?: BrowserNotificationPermission;
+  isIOS?: boolean;
+  isInstalled?: boolean;
+  canInstallPrompt?: boolean;
+  soundEnabled?: boolean;
+  onToggleSound?: () => void;
+  onRequestNotificationPermission?: () => Promise<BrowserNotificationPermission>;
+  onInstallApp?: () => Promise<'accepted' | 'dismissed' | 'unavailable'>;
+  onSendTestNotification?: () => void;
 }
 
 export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
@@ -67,6 +83,15 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   onRequestResetSystem,
   appIcon = 'Sparkles',
   onChangeAppIcon,
+  notificationPermission = 'default',
+  isIOS = false,
+  isInstalled = false,
+  canInstallPrompt = false,
+  soundEnabled = true,
+  onToggleSound,
+  onRequestNotificationPermission,
+  onInstallApp,
+  onSendTestNotification,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -77,6 +102,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const [apiTesting, setApiTesting] = useState(false);
   const [apiTestStatus, setApiTestStatus] = useState<string | null>(null);
   const [apiMsg, setApiMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   // Change own PIN
   const [currentPin, setCurrentPin] = useState('');
@@ -374,6 +400,123 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
               </button>
             </div>
           </form>
+        </section>
+
+        {/* Section 1B: Thông báo thời gian thực & Cài đặt PWA trên điện thoại */}
+        <section className="mt-6 border-t border-[#ECE7DD] pt-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="flex items-center gap-1.5 text-sm font-semibold text-[#1A1F1E]">
+                <Bell className="h-4 w-4 text-[#0D4F43]" />
+                Thông báo điện thoại &amp; Cài đặt App (PWA)
+              </h3>
+              <p className="mt-0.5 text-xs text-[#57605E]">
+                Nhận thông báo nổi ngay khi Ngân, Giang, Hoa, Phương hoặc Linh tạo đơn, nhập kho hay thêm khoản chi.
+              </p>
+            </div>
+
+            {onToggleSound && (
+              <button
+                type="button"
+                onClick={onToggleSound}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#E4DFD5] bg-[#FAF8F4] px-2.5 py-1.5 text-xs font-medium text-[#1A1F1E] hover:bg-[#F3EFE6]"
+              >
+                {soundEnabled ? (
+                  <>
+                    <Volume2 className="h-3.5 w-3.5 text-[#0D4F43]" />
+                    <span>Âm thanh ting: Bật</span>
+                  </>
+                ) : (
+                  <>
+                    <VolumeX className="h-3.5 w-3.5 text-[#8A918E]" />
+                    <span>Âm thanh ting: Tắt</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+
+          <div className="mt-3 space-y-2.5 rounded-xl border border-[#ECE7DD] bg-[#FAF8F4] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              {notificationPermission === 'granted' ? (
+                <>
+                  <span className="inline-flex items-center gap-2 text-xs font-semibold text-[#0D4F43]">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#0D4F43]" />
+                    Đã bật thông báo trên thiết bị này
+                  </span>
+                  {onSendTestNotification && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSendTestNotification();
+                        setPushMsg('Đã gửi một thông báo thử tới thiết bị này.');
+                      }}
+                      className="rounded-lg border border-[#E4DFD5] bg-white px-3 py-1.5 text-xs font-medium text-[#1A1F1E] hover:bg-[#F3EFE6]"
+                    >
+                      Gửi thông báo thử
+                    </button>
+                  )}
+                </>
+              ) : notificationPermission === 'denied' ? (
+                <div className="flex items-start gap-2 text-xs text-[#A63429]">
+                  <BellOff className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Thông báo đang bị chặn trên trình duyệt này. Vui lòng mở Cài đặt trình duyệt / Điện thoại và chuyển quyền Thông báo sang Cho phép.
+                  </span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!onRequestNotificationPermission) return;
+                    setPushMsg(null);
+                    const result = await onRequestNotificationPermission();
+                    if (result === 'granted') {
+                      setPushMsg('Đã bật thông báo trên điện thoại này thành công!');
+                      onSendTestNotification?.();
+                    } else if (result === 'denied') {
+                      setPushMsg('Bạn đã từ chối quyền thông báo. Có thể bật lại trong Cài đặt trình duyệt.');
+                    } else if (result === 'unsupported') {
+                      setPushMsg('Trình duyệt hiện tại chưa hỗ trợ Web Notification.');
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#0D4F43] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#093B32]"
+                >
+                  <span>🔔 Bật thông báo trên điện thoại này</span>
+                </button>
+              )}
+            </div>
+
+            {pushMsg && (
+              <p className="text-xs font-medium text-[#0D4F43]">{pushMsg}</p>
+            )}
+
+            {isIOS && !isInstalled && (
+              <div className="flex items-start gap-2 rounded-lg border border-[#E4DFD5] bg-white px-3 py-2 text-xs leading-relaxed text-[#57605E]">
+                <Share2 className="mt-0.5 h-4 w-4 shrink-0 text-[#0D4F43]" />
+                <span>
+                  <strong>Trên iPhone:</strong> Hãy bấm <strong>Chia sẻ</strong> →{' '}
+                  <strong>Thêm vào MH chính</strong> trước, sau đó mở app từ màn hình chính để bật thông báo.
+                </span>
+              </div>
+            )}
+
+            {canInstallPrompt && onInstallApp && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#ECE7DD] pt-2.5">
+                <span className="text-xs text-[#57605E]">
+                  Cài ứng dụng như App riêng để chạy toàn màn hình và nhận thông báo nhanh hơn.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void onInstallApp()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#0D4F43] hover:bg-[#0D4F43]/5"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Thêm vào màn hình chính
+                </button>
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Section 2: Tùy chỉnh Icon & Cấu hình Gemini API (Admin only) */}

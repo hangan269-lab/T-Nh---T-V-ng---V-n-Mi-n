@@ -299,6 +299,29 @@ service cloud.firestore {
         hasValidBaseMeta(data);
     }
 
+    function isValidNotification(data) {
+      return data.keys().hasAll([
+          'id', 'workspaceId', 'title', 'message', 'type',
+          'actorId', 'actorName', 'createdAt', 'readBy',
+          'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'workspaceId', 'title', 'message', 'type',
+          'actorId', 'actorName', 'createdAt', 'readBy',
+          'serverCreatedAt', 'serverUpdatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 500 &&
+        data.type in ['order', 'finance', 'inventory', 'system'] &&
+        data.actorId is string && data.actorId.size() >= 1 && data.actorId.size() <= 128 &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 160 &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.readBy is list && data.readBy.size() <= 50 &&
+        (data.readBy.size() == 0 || (data.readBy[0] is string && data.readBy[0].size() >= 1 && data.readBy[0].size() <= 128)) &&
+        hasValidBaseMeta(data);
+    }
+
     // -------------------------------------------------------------------------
     // Collection Match Rules (Workspace-Scoped Cloud Sync + Anonymous Auth Gate)
     // -------------------------------------------------------------------------
@@ -388,6 +411,14 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(partnerId) && isValidChinaPartner(incoming()) && hasValidCreateMeta(incoming());
       allow update: if isSignedIn() && isValidId(partnerId) && isValidChinaPartner(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
       allow delete: if isSignedIn() && isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && isValidId(notificationId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(notificationId) && isValidNotification(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(notificationId) && isValidNotification(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(notificationId) && isLegacyOrStudioWorkspace(existing());
     }
   }
 }

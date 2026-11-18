@@ -233,6 +233,25 @@
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "workspaceId", "name", "region", "specialty", "channel", "exchangeRateCNY", "rating", "status", "serverCreatedAt", "serverUpdatedAt"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "Real-time team activity notification with read receipts across members.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "enum": ["nhavuongmien_studio"] },
+        "title": { "type": "string", "maxLength": 160 },
+        "message": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string", "enum": ["order", "finance", "inventory", "system"] },
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "readBy": { "type": "array", "description": "Member IDs who have read this notification (0..50)" },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "workspaceId", "title", "message", "type", "actorId", "actorName", "createdAt", "readBy", "serverCreatedAt", "serverUpdatedAt"]
     }
   },
   "firestore": {
@@ -279,6 +298,10 @@
     "/chinaPartners/{partnerId}": {
       "schema": { "$ref": "#/entities/ChinaPartner" },
       "description": "China sourcing partners and market expansion directory."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/AppNotification" },
+      "description": "Real-time team notifications synced across devices."
     }
   }
 }

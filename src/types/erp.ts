@@ -240,6 +240,19 @@ export interface AppBackupSnapshot {
   snapshot: AppBackupSnapshotData;
 }
 
+export type NotificationType = 'order' | 'finance' | 'inventory' | 'system';
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  actorId: string;
+  actorName: string;
+  createdAt: string; // ISO string
+  readBy: string[];
+}
+
 export interface AppState {
   products: Product[];
   stockImports: StockImport[];
@@ -251,6 +264,7 @@ export interface AppState {
   auditLogs: AuditLogEntry[];
   backups: AppBackupSnapshot[];
   chinaPartners: ChinaPartner[];
+  notifications: AppNotification[];
   appIcon?: string;
   isSampleData: boolean;
 }

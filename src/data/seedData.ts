@@ -547,6 +547,7 @@ export function createSeedState(baseDate: Date = new Date()): AppState {
         lastOrderDate: yesterday,
       },
     ],
+    notifications: [],
     appIcon: 'Sparkles',
   };
 }
@@ -567,6 +568,7 @@ export function createEmptyState(
     auditLogs: [],
     backups: existingBackups,
     chinaPartners: [],
+    notifications: [],
     appIcon: 'Sparkles',
   };
 }

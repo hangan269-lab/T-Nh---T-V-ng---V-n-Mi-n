@@ -103,3 +103,20 @@ test('all seed records and backup snapshots sanitize cleanly with no undefined v
   assert.equal(JSON.stringify(bakOut).includes('undefined'), false);
   assert.ok(Array.isArray((bakOut.snapshot as { orders: unknown[] }).orders));
 });
+
+test('sanitizeNotificationPayload enforces type, clamps lengths, and deduplicates readBy', () => {
+  const sanitized = sanitizeEntityForCollection('notifications', {
+    id: 'ntf/test$1',
+    title: 'T'.repeat(300),
+    message: 'M'.repeat(800),
+    type: 'order',
+    actorId: 'acc_giang',
+    actorName: 'Giang',
+    createdAt: '2026-11-18T10:00:00.000Z',
+    readBy: ['acc_giang', 'acc_giang', '', 'acc_ngan'],
+  });
+  assert.equal(sanitized.id, 'ntf_test_1');
+  assert.equal((sanitized.title as string).length, BLUEPRINT_LIMITS.NAME_MAX);
+  assert.equal((sanitized.message as string).length, BLUEPRINT_LIMITS.NOTE_MAX);
+  assert.deepEqual(sanitized.readBy, ['acc_giang', 'acc_ngan']);
+});

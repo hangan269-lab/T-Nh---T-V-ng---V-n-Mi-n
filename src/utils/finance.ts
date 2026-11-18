@@ -2,6 +2,7 @@ import {
   ALL_BRANDS,
   ALL_SIZES,
   AppBackupSnapshot,
+  AppNotification,
   AppState,
   AuditCategory,
   AuditLogEntry,
@@ -10,6 +11,7 @@ import {
   ChinaPartner,
   Expense,
   ExpenseStatus,
+  NotificationType,
   Order,
   OrderItem,
   PaymentStatus,
@@ -115,6 +117,69 @@ export function createAuditEntry(input: {
     oldValue: input.oldValue,
     newValue: input.newValue,
   };
+}
+
+export const MAX_NOTIFICATIONS_HISTORY = 120;
+
+export function createAppNotification(input: {
+  title: string;
+  message: string;
+  type: NotificationType;
+  actor: Pick<ActorIdentity, 'id' | 'name'>;
+  createdAt?: string;
+}): AppNotification {
+  return {
+    id: `ntf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    title: input.title,
+    message: input.message,
+    type: input.type,
+    actorId: input.actor.id,
+    actorName: input.actor.name,
+    createdAt: input.createdAt ?? new Date().toISOString(),
+    readBy: input.actor.id ? [input.actor.id] : [],
+  };
+}
+
+export function appendNotificationToState(
+  state: AppState,
+  notification: AppNotification
+): AppState {
+  const current = Array.isArray(state.notifications) ? state.notifications : [];
+  return {
+    ...state,
+    notifications: [notification, ...current].slice(0, MAX_NOTIFICATIONS_HISTORY),
+  };
+}
+
+export function markNotificationReadInState(
+  state: AppState,
+  notificationId: string,
+  userId: string
+): AppState {
+  if (!userId) return state;
+  const current = Array.isArray(state.notifications) ? state.notifications : [];
+  let changed = false;
+  const next = current.map((n) => {
+    if (n.id !== notificationId) return n;
+    const readBy = Array.isArray(n.readBy) ? n.readBy : [];
+    if (readBy.includes(userId)) return n;
+    changed = true;
+    return { ...n, readBy: [...readBy, userId] };
+  });
+  return changed ? { ...state, notifications: next } : state;
+}
+
+export function markAllNotificationsReadInState(state: AppState, userId: string): AppState {
+  if (!userId) return state;
+  const current = Array.isArray(state.notifications) ? state.notifications : [];
+  let changed = false;
+  const next = current.map((n) => {
+    const readBy = Array.isArray(n.readBy) ? n.readBy : [];
+    if (readBy.includes(userId)) return n;
+    changed = true;
+    return { ...n, readBy: [...readBy, userId] };
+  });
+  return changed ? { ...state, notifications: next } : state;
 }
 
 export const MAX_BACKUP_SNAPSHOTS = 25;
@@ -268,6 +333,7 @@ export function resetSystemDataWithAudit(
       accounts: state.accounts,
       auditLogs: [log, ...state.auditLogs],
       backups: prependBackupSnapshot(state.backups, backup),
+      notifications: state.notifications ?? [],
       isSampleData: false,
     },
   };
@@ -2611,6 +2677,9 @@ export function parseImportedJSON(
     const chinaPartners = Array.isArray(candidate.chinaPartners)
       ? (candidate.chinaPartners as ChinaPartner[])
       : [];
+    const notifications = Array.isArray(candidate.notifications)
+      ? (candidate.notifications as AppNotification[])
+      : [];
     return {
       ok: true,
       state: {
@@ -2628,6 +2697,7 @@ export function parseImportedJSON(
         accounts,
         auditLogs,
         backups,
+        notifications,
         isSampleData: Boolean(candidate.isSampleData),
       },
     };

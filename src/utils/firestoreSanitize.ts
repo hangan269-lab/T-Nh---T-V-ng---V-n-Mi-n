@@ -1,5 +1,6 @@
 import {
   AppBackupSnapshot,
+  AppNotification,
   AppState,
   AuditLogEntry,
   BudgetItem,
@@ -28,6 +29,7 @@ export const BUSINESS_COLLECTIONS = [
   'auditLogs',
   'backups',
   'chinaPartners',
+  'notifications',
 ] as const;
 
 export type BusinessCollectionName = (typeof BUSINESS_COLLECTIONS)[number];
@@ -268,6 +270,37 @@ export function sanitizeChinaPartnerPayload(cp: ChinaPartner): Record<string, un
   };
 }
 
+export function sanitizeNotificationPayload(n: AppNotification): Record<string, unknown> {
+  const validType =
+    n.type === 'order' || n.type === 'finance' || n.type === 'inventory' || n.type === 'system'
+      ? n.type
+      : 'system';
+
+  const seenReadBy = new Set<string>();
+  const cleanReadBy: string[] = [];
+  if (Array.isArray(n.readBy)) {
+    for (const rawUid of n.readBy) {
+      const uid = clampStr(rawUid, BLUEPRINT_LIMITS.ID_MAX);
+      if (uid && !seenReadBy.has(uid)) {
+        seenReadBy.add(uid);
+        cleanReadBy.push(uid);
+        if (cleanReadBy.length >= 50) break;
+      }
+    }
+  }
+
+  return {
+    id: sanitizeId(n.id, 'ntf'),
+    title: clampStr(n.title, BLUEPRINT_LIMITS.NAME_MAX) || 'Thông báo mới',
+    message: clampStr(n.message, BLUEPRINT_LIMITS.NOTE_MAX) || 'Có thay đổi dữ liệu mới',
+    type: validType,
+    actorId: clampStr(n.actorId, BLUEPRINT_LIMITS.ID_MAX) || 'system',
+    actorName: clampStr(n.actorName, BLUEPRINT_LIMITS.NAME_MAX) || 'Hệ thống',
+    createdAt: clampStr(n.createdAt || new Date().toISOString(), BLUEPRINT_LIMITS.TIMESTAMP_MAX),
+    readBy: cleanReadBy,
+  };
+}
+
 export function sanitizeBackupSnapshotPayload(bak: AppBackupSnapshot): Record<string, unknown> {
   const rawSnap = bak.snapshot ?? {
     products: [],
@@ -361,6 +394,8 @@ export function sanitizeEntityForCollection(
       return sanitizeBackupSnapshotPayload(record as AppBackupSnapshot);
     case 'chinaPartners':
       return sanitizeChinaPartnerPayload(record as ChinaPartner);
+    case 'notifications':
+      return sanitizeNotificationPayload(record as AppNotification);
   }
 }
 
