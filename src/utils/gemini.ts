@@ -1,4 +1,9 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import {
+  GenerateContentParameters,
+  GenerateContentResponse,
+  GoogleGenAI,
+  Type,
+} from '@google/genai';
 import {
   ALL_BRANDS,
   ALL_SHIPPING_METHODS,
@@ -13,6 +18,18 @@ import {
 } from '../types/erp';
 
 export const GEMINI_STORAGE_KEY = 'gemini_api_key';
+
+export const PRIMARY_GEMINI_MODEL = 'gemini-3.8-flash';
+export const FALLBACK_GEMINI_MODELS = [
+  'gemini-4-hydrogen',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+] as const;
+
+export const GEMINI_MODEL_CANDIDATES: readonly string[] = [
+  PRIMARY_GEMINI_MODEL,
+  ...FALLBACK_GEMINI_MODELS,
+];
 
 /**
  * Lấy API key của Gemini:
@@ -100,22 +117,76 @@ function getAiClient(customKey?: string): GoogleGenAI {
   });
 }
 
+export function isModelNotFoundError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null) {
+    const record = err as Record<string, unknown>;
+    if (record.status === 404 || record.code === 404) {
+      return true;
+    }
+  }
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+  return (
+    /\b404\b/.test(raw) ||
+    lower.includes('not_found') ||
+    lower.includes('is not found') ||
+    lower.includes('model not found') ||
+    lower.includes('not supported for generatecontent')
+  );
+}
+
+export interface GenerateWithFallbackResult {
+  response: GenerateContentResponse;
+  usedModel: string;
+}
+
+export async function generateContentWithFallback(
+  ai: Pick<GoogleGenAI, 'models'>,
+  params: Omit<GenerateContentParameters, 'model'>,
+  models: readonly string[] = GEMINI_MODEL_CANDIDATES
+): Promise<GenerateWithFallbackResult> {
+  let lastError: unknown;
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    try {
+      const response = await ai.models.generateContent({
+        ...params,
+        model,
+      });
+      return { response, usedModel: model };
+    } catch (err: unknown) {
+      lastError = err;
+      const hasNext = i < models.length - 1;
+      if (hasNext && isModelNotFoundError(err)) {
+        console.warn(
+          `Gemini model "${model}" gặp lỗi 404/NOT_FOUND, tự động thử lại với model dự phòng "${models[i + 1]}"...`
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 /**
  * Kiểm tra kết nối Gemini API
  */
 export async function testGeminiConnection(keyToTest?: string): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
   try {
     const ai = getAiClient(keyToTest);
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const { response, usedModel } = await generateContentWithFallback(ai, {
       contents: 'Trả lời ngắn 1 từ: OK',
-      config: {
-        thinkingConfig: { thinkingLevel: 1 as unknown as undefined },
-      },
     });
     const text = response.text?.trim() || '';
     if (text) {
-      return { ok: true, message: 'Kết nối thành công với Gemini 2.5 Flash!' };
+      return {
+        ok: true,
+        message:
+          usedModel === PRIMARY_GEMINI_MODEL
+            ? 'Kết nối thành công với Gemini 3.8 Flash!'
+            : `Kết nối thành công (tự động dùng model dự phòng ${usedModel})!`,
+      };
     }
     return { ok: false, error: 'Không nhận được phản hồi hợp lệ từ Gemini API.' };
   } catch (err: unknown) {
@@ -163,8 +234,7 @@ Quy tắc chuẩn hóa:
 7. receiptNote: Ghi chú hóa đơn/chứng từ/số phiếu nếu có (hoặc để trống "").
 8. status: Tình trạng thanh toán: "Hoàn thiện" nếu đã chi/đã xong, hoặc "Chưa" nếu tạm ứng hoặc chưa xong.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+  const { response } = await generateContentWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -283,8 +353,7 @@ Quy tắc xử lý:
 11. shippingStatus: "Chưa gửi", "Đã lên đơn VTP", hoặc "Đã giao".
 12. note: Ghi chú đơn hàng.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+  const { response } = await generateContentWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -426,8 +495,7 @@ Quy tắc chuẩn hóa:
 8. initialStockL: Tồn kho ban đầu size L.
 9. initialStockFreesize: Tồn kho ban đầu Freesize (với Vân Miên thường là Freesize).`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+  const { response } = await generateContentWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json',
@@ -562,8 +630,7 @@ Yêu cầu phân tích:
 7. note: Ghi chú thêm từ khách (ví dụ yêu cầu giờ giao, ghi thiệp quà tặng...).
 8. summary: Tóm tắt 1 câu ngắn gọn tiếng Việt các thông tin đã bóc tách.`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+  const { response } = await generateContentWithFallback(ai, {
     contents: prompt,
     config: {
       responseMimeType: 'application/json',

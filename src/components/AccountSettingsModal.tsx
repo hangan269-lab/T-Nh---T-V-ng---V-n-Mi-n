@@ -422,7 +422,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     Cấu hình Trợ lý Gemini AI (Nhập liệu thông minh)
                   </h3>
                   <p className="mt-0.5 text-xs text-[#57605E]">
-                    Sử dụng model <strong className="font-mono text-purple-700">gemini-2.5-flash</strong> để tự động bóc tách đơn hàng từ tin nhắn và nạp hàng loạt từ Excel.
+                    Sử dụng model <strong className="font-mono text-purple-700">gemini-3.8-flash</strong> (tự động dự phòng khi lỗi 404) để bóc tách đơn hàng từ tin nhắn và nạp hàng loạt từ Excel.
                   </p>
                 </div>
                 <div>

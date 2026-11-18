@@ -297,7 +297,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
         }
 
         setQuickParseNotice(
-          `✨ AI Gemini 2.5 Flash đã bóc tách & điền tự động: ${summaryParts.join(' · ')}`
+          `✨ AI Gemini 3.8 Flash đã bóc tách & điền tự động: ${summaryParts.join(' · ')}`
         );
         setAiParsingOrder(false);
         return;
@@ -663,7 +663,7 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                   ✨ Dán tin nhắn chốt đơn (AI tự điền form)
                 </label>
                 <span className="text-[11px] text-[#57605E]">
-                  AI Gemini 2.5 Flash tự động bóc tách Tên, SĐT, Địa chỉ, khớp đúng Mẫu trong kho, Số lượng và Vận chuyển
+                  AI Gemini 3.8 Flash tự động bóc tách Tên, SĐT, Địa chỉ, khớp đúng Mẫu trong kho, Số lượng và Vận chuyển
                 </span>
               </div>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-stretch">

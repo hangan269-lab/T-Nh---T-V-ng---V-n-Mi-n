@@ -28,6 +28,7 @@ import {
   ExtractedOrderRow,
   ExtractedProductRow,
   getGeminiApiKey,
+  isModelNotFoundError,
   parseExpensesWithGemini,
   parseOrdersWithGemini,
   parseProductsWithGemini,
@@ -178,6 +179,8 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
         setError('Mã Gemini API Key không hợp lệ. Vui lòng kiểm tra lại trong phần Cài đặt.');
       } else if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
         setError('Đã vượt quá hạn mức truy vấn miễn phí (Quota limit). Vui lòng thử lại sau ít phút.');
+      } else if (isModelNotFoundError(err)) {
+        setError('Không tìm thấy model AI phù hợp (404) sau khi đã thử các model dự phòng. Vui lòng kiểm tra lại API Key hoặc thử lại sau.');
       } else {
         setError(`Lỗi xử lý AI: ${msg}`);
       }
@@ -311,7 +314,7 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
                   Mẹo sử dụng:
                 </div>
                 <p className="mt-1 text-[11px] text-purple-700 leading-relaxed">
-                  Bạn chỉ cần mở bảng Excel hoặc Google Sheets cũ, dùng chuột bôi đen các dòng dữ liệu (kể cả có tiêu đề hay không), nhấn <strong>Ctrl + C</strong> rồi dán thẳng vào ô trên. AI Gemini 2.5 Flash sẽ tự động nhận diện các cột, chuẩn hóa số tiền và phân loại hạng mục chính xác.
+                  Bạn chỉ cần mở bảng Excel hoặc Google Sheets cũ, dùng chuột bôi đen các dòng dữ liệu (kể cả có tiêu đề hay không), nhấn <strong>Ctrl + C</strong> rồi dán thẳng vào ô trên. AI Gemini 3.8 Flash sẽ tự động nhận diện các cột, chuẩn hóa số tiền và phân loại hạng mục chính xác.
                 </p>
               </div>
             </div>
@@ -518,7 +521,7 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
         {/* Footer */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#ECE7DD] bg-[#FAF8F4] p-4">
           <div className="text-[11px] text-[#57605E]">
-            Model AI: <span className="font-mono font-medium text-purple-700">gemini-2.5-flash</span> (Structured Outputs)
+            Model AI: <span className="font-mono font-medium text-purple-700">gemini-3.8-flash</span> (Structured Outputs · Auto fallback)
           </div>
           <div className="flex items-center gap-2">
             <button
