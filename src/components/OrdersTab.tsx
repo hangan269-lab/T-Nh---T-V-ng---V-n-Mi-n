@@ -164,6 +164,9 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
   const [quickPasteText, setQuickPasteText] = useState('');
   const [quickParseNotice, setQuickParseNotice] = useState<string | null>(null);
   const [aiParsingOrder, setAiParsingOrder] = useState(false);
+  const [aiParsingStatus, setAiParsingStatus] = useState(
+    'Đang dùng AI đọc và chuẩn hóa dữ liệu...'
+  );
   const [quickProductModalOpen, setQuickProductModalOpen] = useState(false);
 
   const activeProducts = useMemo(
@@ -252,10 +255,15 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
 
     if (apiKey) {
       setAiParsingOrder(true);
+      setAiParsingStatus('Đang dùng AI đọc và chuẩn hóa dữ liệu...');
       setQuickParseNotice(null);
       setFormError(null);
       try {
-        const parsed = await parseCustomerChatWithGemini(trimmed, activeProds);
+        const parsed = await parseCustomerChatWithGemini(trimmed, activeProds, {
+          onStatusChange: (status) => {
+            setAiParsingStatus(status.message);
+          },
+        });
         if (parsed.customerName) setCustomerName(parsed.customerName);
         if (parsed.customerPhone) setCustomerPhone(parsed.customerPhone);
         if (parsed.shippingAddress) setShippingAddress(parsed.shippingAddress);
@@ -720,9 +728,12 @@ export const OrdersTab: React.FC<OrdersTabProps> = ({
                 </div>
               </div>
               {aiParsingOrder && (
-                <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-purple-100/60 px-3 py-1.5 text-xs font-medium text-purple-900">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-600" />
-                  <span>Đang dùng AI đọc và chuẩn hóa dữ liệu...</span>
+                <div
+                  role="status"
+                  className="mt-2.5 flex items-center gap-2 rounded-lg bg-purple-100/60 px-3 py-1.5 text-xs font-medium text-purple-900"
+                >
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-purple-600" />
+                  <span>{aiParsingStatus}</span>
                 </div>
               )}
               {quickParseNotice && !aiParsingOrder && (

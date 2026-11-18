@@ -20,16 +20,25 @@ import {
 export const GEMINI_STORAGE_KEY = 'gemini_api_key';
 
 export const PRIMARY_GEMINI_MODEL = 'gemini-3.8-flash';
-export const FALLBACK_GEMINI_MODELS = [
+export const PRIORITY_GEMINI_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.0-flash',
+  'gemini-2.5-flash-lite',
+] as const;
+
+export const SAFETY_FALLBACK_GEMINI_MODELS = [
   'gemini-4-hydrogen',
   'gemini-2.5-flash',
   'gemini-3.1-flash-lite',
 ] as const;
 
 export const GEMINI_MODEL_CANDIDATES: readonly string[] = [
-  PRIMARY_GEMINI_MODEL,
-  ...FALLBACK_GEMINI_MODELS,
+  ...PRIORITY_GEMINI_MODELS,
+  ...SAFETY_FALLBACK_GEMINI_MODELS,
 ];
+
+export const MAX_RETRIES_PER_MODEL = 2;
+export const RETRY_DELAY_MS = 1500;
 
 /**
  * Lấy API key của Gemini:
@@ -135,49 +144,161 @@ export function isModelNotFoundError(err: unknown): boolean {
   );
 }
 
+export function isOverloadOrRateLimitError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null) {
+    const record = err as Record<string, unknown>;
+    if (
+      record.status === 503 ||
+      record.code === 503 ||
+      record.status === 429 ||
+      record.code === 429
+    ) {
+      return true;
+    }
+  }
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+  return (
+    /\b503\b/.test(raw) ||
+    /\b429\b/.test(raw) ||
+    lower.includes('unavailable') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('overloaded') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests') ||
+    lower.includes('quota exceeded')
+  );
+}
+
+export interface GeminiRetryStatus {
+  reason: 'overload' | 'fallback';
+  model: string;
+  nextModel?: string;
+  attempt: number;
+  maxRetries: number;
+  message: string;
+}
+
+export interface GeminiCallOptions {
+  onStatusChange?: (status: GeminiRetryStatus) => void;
+  models?: readonly string[];
+  maxRetriesPerModel?: number;
+  retryDelayMs?: number;
+  sleepFn?: (ms: number) => Promise<void>;
+}
+
 export interface GenerateWithFallbackResult {
   response: GenerateContentResponse;
   usedModel: string;
 }
 
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export async function generateContentWithFallback(
   ai: Pick<GoogleGenAI, 'models'>,
   params: Omit<GenerateContentParameters, 'model'>,
-  models: readonly string[] = GEMINI_MODEL_CANDIDATES
+  options: GeminiCallOptions = {}
 ): Promise<GenerateWithFallbackResult> {
+  const models = options.models ?? GEMINI_MODEL_CANDIDATES;
+  const maxRetriesPerModel = options.maxRetriesPerModel ?? MAX_RETRIES_PER_MODEL;
+  const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
+  const sleepFn = options.sleepFn ?? defaultSleep;
+
   let lastError: unknown;
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i];
-    try {
-      const response = await ai.models.generateContent({
-        ...params,
-        model,
-      });
-      return { response, usedModel: model };
-    } catch (err: unknown) {
-      lastError = err;
-      const hasNext = i < models.length - 1;
-      if (hasNext && isModelNotFoundError(err)) {
-        console.warn(
-          `Gemini model "${model}" gặp lỗi 404/NOT_FOUND, tự động thử lại với model dự phòng "${models[i + 1]}"...`
-        );
-        continue;
+
+  for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
+    const model = models[modelIndex];
+
+    for (let retry = 0; retry <= maxRetriesPerModel; retry++) {
+      try {
+        const response = await ai.models.generateContent({
+          ...params,
+          model,
+        });
+        return { response, usedModel: model };
+      } catch (err: unknown) {
+        lastError = err;
+        const hasNextModel = modelIndex < models.length - 1;
+
+        if (isModelNotFoundError(err)) {
+          if (hasNextModel) {
+            const nextModel = models[modelIndex + 1];
+            console.warn(
+              `Gemini model "${model}" gặp lỗi 404/NOT_FOUND, tự động chuyển sang model dự phòng "${nextModel}"...`
+            );
+            options.onStatusChange?.({
+              reason: 'fallback',
+              model,
+              nextModel,
+              attempt: retry + 1,
+              maxRetries: maxRetriesPerModel,
+              message: `Máy chủ AI đang đông hoặc model chưa sẵn sàng, hệ thống đang tự động chuyển sang ${nextModel}...`,
+            });
+            break;
+          }
+          throw err;
+        }
+
+        if (isOverloadOrRateLimitError(err)) {
+          if (retry < maxRetriesPerModel) {
+            const retryNumber = retry + 1;
+            console.warn(
+              `Gemini model "${model}" quá tải (503/429), đợi ${retryDelayMs}ms và thử lại (${retryNumber}/${maxRetriesPerModel})...`
+            );
+            options.onStatusChange?.({
+              reason: 'overload',
+              model,
+              attempt: retryNumber,
+              maxRetries: maxRetriesPerModel,
+              message: `Máy chủ AI đang đông, hệ thống đang tự động kết nối lại... (lần ${retryNumber}/${maxRetriesPerModel})`,
+            });
+            await sleepFn(retryDelayMs);
+            continue;
+          }
+
+          if (hasNextModel) {
+            const nextModel = models[modelIndex + 1];
+            console.warn(
+              `Gemini model "${model}" vẫn bận sau ${maxRetriesPerModel} lần thử lại, chuyển sang model dự phòng "${nextModel}"...`
+            );
+            options.onStatusChange?.({
+              reason: 'fallback',
+              model,
+              nextModel,
+              attempt: retry + 1,
+              maxRetries: maxRetriesPerModel,
+              message: `Máy chủ AI đang đông, hệ thống đang tự động kết nối lại với model dự phòng (${nextModel})...`,
+            });
+            break;
+          }
+          throw err;
+        }
+
+        // Lỗi không thể tự phục hồi (sai API Key 400/403, dữ liệu đầu vào lỗi...) -> dừng ngay
+        throw err;
       }
-      throw err;
     }
   }
+
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /**
  * Kiểm tra kết nối Gemini API
  */
-export async function testGeminiConnection(keyToTest?: string): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+export async function testGeminiConnection(
+  keyToTest?: string,
+  options?: GeminiCallOptions
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
   try {
     const ai = getAiClient(keyToTest);
-    const { response, usedModel } = await generateContentWithFallback(ai, {
-      contents: 'Trả lời ngắn 1 từ: OK',
-    });
+    const { response, usedModel } = await generateContentWithFallback(
+      ai,
+      {
+        contents: 'Trả lời ngắn 1 từ: OK',
+      },
+      options
+    );
     const text = response.text?.trim() || '';
     if (text) {
       return {
@@ -194,8 +315,11 @@ export async function testGeminiConnection(keyToTest?: string): Promise<{ ok: tr
     if (errorMsg.includes('API_KEY_INVALID') || errorMsg.includes('API key not valid')) {
       return { ok: false, error: 'API Key không hợp lệ. Vui lòng kiểm tra lại mã khóa tạo từ aistudio.google.com.' };
     }
-    if (errorMsg.includes('RESOURCE_EXHAUSTED')) {
-      return { ok: false, error: 'Hết hạn mức truy vấn (Quota exceeded). Vui lòng thử lại sau.' };
+    if (isOverloadOrRateLimitError(err)) {
+      return {
+        ok: false,
+        error: 'Máy chủ AI hiện đang quá tải hoặc vượt hạn mức tạm thời sau khi đã thử lại nhiều lần. Vui lòng thử lại sau ít phút.',
+      };
     }
     return { ok: false, error: errorMsg };
   }
@@ -216,7 +340,10 @@ export interface ExtractedExpenseRow {
   status: ExpenseStatus;
 }
 
-export async function parseExpensesWithGemini(rawText: string): Promise<ExtractedExpenseRow[]> {
+export async function parseExpensesWithGemini(
+  rawText: string,
+  options?: GeminiCallOptions
+): Promise<ExtractedExpenseRow[]> {
   const ai = getAiClient();
   const prompt = `Bạn là trợ lý kế toán chuyên nghiệp của xưởng thời trang và trà "Tơ Nhã - Tơ Vương - Vân Miên".
 Nhiệm vụ: Trích xuất các dòng chi phí từ dữ liệu thô (bảng tính Excel, Google Sheets copy-paste hoặc danh sách viết tay) thành mảng JSON chuẩn.
@@ -234,30 +361,34 @@ Quy tắc chuẩn hóa:
 7. receiptNote: Ghi chú hóa đơn/chứng từ/số phiếu nếu có (hoặc để trống "").
 8. status: Tình trạng thanh toán: "Hoàn thiện" nếu đã chi/đã xong, hoặc "Chưa" nếu tạm ứng hoặc chưa xong.`;
 
-  const { response } = await generateContentWithFallback(ai, {
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        description: 'Danh sách các dòng chi phí được bóc tách từ Excel',
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            date: { type: Type.STRING, description: 'Định dạng YYYY-MM-DD' },
-            category: { type: Type.STRING, description: 'Hạng mục chi' },
-            brandScope: { type: Type.STRING, description: 'Tơ Nhã, Tơ Vương, Vân Miên hoặc Dùng chung' },
-            detail: { type: Type.STRING, description: 'Chi tiết nội dung chi' },
-            amount: { type: Type.INTEGER, description: 'Số tiền VNĐ nguyên dương' },
-            paidBy: { type: Type.STRING, description: 'Người ứng chi (Ngân chi, Giang chi...)' },
-            receiptNote: { type: Type.STRING, description: 'Ghi chú chứng từ/hóa đơn' },
-            status: { type: Type.STRING, description: 'Hoàn thiện hoặc Chưa' },
+  const { response } = await generateContentWithFallback(
+    ai,
+    {
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          description: 'Danh sách các dòng chi phí được bóc tách từ Excel',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              date: { type: Type.STRING, description: 'Định dạng YYYY-MM-DD' },
+              category: { type: Type.STRING, description: 'Hạng mục chi' },
+              brandScope: { type: Type.STRING, description: 'Tơ Nhã, Tơ Vương, Vân Miên hoặc Dùng chung' },
+              detail: { type: Type.STRING, description: 'Chi tiết nội dung chi' },
+              amount: { type: Type.INTEGER, description: 'Số tiền VNĐ nguyên dương' },
+              paidBy: { type: Type.STRING, description: 'Người ứng chi (Ngân chi, Giang chi...)' },
+              receiptNote: { type: Type.STRING, description: 'Ghi chú chứng từ/hóa đơn' },
+              status: { type: Type.STRING, description: 'Hoàn thiện hoặc Chưa' },
+            },
+            required: ['date', 'category', 'brandScope', 'detail', 'amount', 'paidBy', 'status'],
           },
-          required: ['date', 'category', 'brandScope', 'detail', 'amount', 'paidBy', 'status'],
         },
       },
     },
-  });
+    options
+  );
 
   const jsonText = response.text?.trim() || '[]';
   const rawList = JSON.parse(jsonText) as Array<Record<string, unknown>>;
@@ -318,7 +449,8 @@ export interface ExtractedOrderRow {
 
 export async function parseOrdersWithGemini(
   rawText: string,
-  existingProducts: Product[]
+  existingProducts: Product[],
+  options?: GeminiCallOptions
 ): Promise<ExtractedOrderRow[]> {
   const ai = getAiClient();
   const productCatalogSample = existingProducts
@@ -353,46 +485,50 @@ Quy tắc xử lý:
 11. shippingStatus: "Chưa gửi", "Đã lên đơn VTP", hoặc "Đã giao".
 12. note: Ghi chú đơn hàng.`;
 
-  const { response } = await generateContentWithFallback(ai, {
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        description: 'Danh sách đơn hàng bóc tách được',
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            date: { type: Type.STRING },
-            brand: { type: Type.STRING },
-            customerName: { type: Type.STRING },
-            customerPhone: { type: Type.STRING },
-            shippingAddress: { type: Type.STRING },
-            shippingMethod: { type: Type.STRING },
-            items: {
-              type: Type.ARRAY,
+  const { response } = await generateContentWithFallback(
+    ai,
+    {
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          description: 'Danh sách đơn hàng bóc tách được',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              date: { type: Type.STRING },
+              brand: { type: Type.STRING },
+              customerName: { type: Type.STRING },
+              customerPhone: { type: Type.STRING },
+              shippingAddress: { type: Type.STRING },
+              shippingMethod: { type: Type.STRING },
               items: {
-                type: Type.OBJECT,
-                properties: {
-                  productCodeOrName: { type: Type.STRING },
-                  size: { type: Type.STRING },
-                  quantity: { type: Type.INTEGER },
-                  unitPrice: { type: Type.INTEGER },
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    productCodeOrName: { type: Type.STRING },
+                    size: { type: Type.STRING },
+                    quantity: { type: Type.INTEGER },
+                    unitPrice: { type: Type.INTEGER },
+                  },
+                  required: ['productCodeOrName', 'quantity'],
                 },
-                required: ['productCodeOrName', 'quantity'],
               },
+              shippingFee: { type: Type.INTEGER },
+              discount: { type: Type.INTEGER },
+              paymentStatus: { type: Type.STRING },
+              shippingStatus: { type: Type.STRING },
+              note: { type: Type.STRING },
             },
-            shippingFee: { type: Type.INTEGER },
-            discount: { type: Type.INTEGER },
-            paymentStatus: { type: Type.STRING },
-            shippingStatus: { type: Type.STRING },
-            note: { type: Type.STRING },
+            required: ['customerName', 'customerPhone', 'items'],
           },
-          required: ['customerName', 'customerPhone', 'items'],
         },
       },
     },
-  });
+    options
+  );
 
   const jsonText = response.text?.trim() || '[]';
   const rawList = JSON.parse(jsonText) as Array<Record<string, unknown>>;
@@ -476,7 +612,10 @@ export interface ExtractedProductRow {
   initialStock: Partial<Record<SizeOption, number>>;
 }
 
-export async function parseProductsWithGemini(rawText: string): Promise<ExtractedProductRow[]> {
+export async function parseProductsWithGemini(
+  rawText: string,
+  options?: GeminiCallOptions
+): Promise<ExtractedProductRow[]> {
   const ai = getAiClient();
   const prompt = `Bạn là chuyên gia quản lý kho của "Tơ Nhã - Tơ Vương - Vân Miên".
 Nhiệm vụ: Trích xuất danh mục mẫu sản phẩm và số lượng tồn ban đầu từ bảng tính Excel / Google Sheets thô.
@@ -495,31 +634,35 @@ Quy tắc chuẩn hóa:
 8. initialStockL: Tồn kho ban đầu size L.
 9. initialStockFreesize: Tồn kho ban đầu Freesize (với Vân Miên thường là Freesize).`;
 
-  const { response } = await generateContentWithFallback(ai, {
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        description: 'Danh mục sản phẩm và tồn kho',
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            code: { type: Type.STRING },
-            name: { type: Type.STRING },
-            brand: { type: Type.STRING },
-            costPrice: { type: Type.INTEGER },
-            sellPrice: { type: Type.INTEGER },
-            initialStockS: { type: Type.INTEGER },
-            initialStockM: { type: Type.INTEGER },
-            initialStockL: { type: Type.INTEGER },
-            initialStockFreesize: { type: Type.INTEGER },
+  const { response } = await generateContentWithFallback(
+    ai,
+    {
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          description: 'Danh mục sản phẩm và tồn kho',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              code: { type: Type.STRING },
+              name: { type: Type.STRING },
+              brand: { type: Type.STRING },
+              costPrice: { type: Type.INTEGER },
+              sellPrice: { type: Type.INTEGER },
+              initialStockS: { type: Type.INTEGER },
+              initialStockM: { type: Type.INTEGER },
+              initialStockL: { type: Type.INTEGER },
+              initialStockFreesize: { type: Type.INTEGER },
+            },
+            required: ['name', 'brand', 'sellPrice'],
           },
-          required: ['name', 'brand', 'sellPrice'],
         },
       },
     },
-  });
+    options
+  );
 
   const jsonText = response.text?.trim() || '[]';
   const rawList = JSON.parse(jsonText) as Array<Record<string, unknown>>;
@@ -587,7 +730,8 @@ export interface ParsedChatOrder {
 
 export async function parseCustomerChatWithGemini(
   chatText: string,
-  catalog: Product[]
+  catalog: Product[],
+  options?: GeminiCallOptions
 ): Promise<ParsedChatOrder> {
   const ai = getAiClient();
   const activeProducts = catalog.filter((p) => !p.isArchived);
@@ -630,40 +774,44 @@ Yêu cầu phân tích:
 7. note: Ghi chú thêm từ khách (ví dụ yêu cầu giờ giao, ghi thiệp quà tặng...).
 8. summary: Tóm tắt 1 câu ngắn gọn tiếng Việt các thông tin đã bóc tách.`;
 
-  const { response } = await generateContentWithFallback(ai, {
-    contents: prompt,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          customerName: { type: Type.STRING },
-          customerPhone: { type: Type.STRING },
-          shippingAddress: { type: Type.STRING },
-          shippingMethod: { type: Type.STRING },
-          brand: { type: Type.STRING },
-          items: {
-            type: Type.ARRAY,
+  const { response } = await generateContentWithFallback(
+    ai,
+    {
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            customerName: { type: Type.STRING },
+            customerPhone: { type: Type.STRING },
+            shippingAddress: { type: Type.STRING },
+            shippingMethod: { type: Type.STRING },
+            brand: { type: Type.STRING },
             items: {
-              type: Type.OBJECT,
-              properties: {
-                matchedProductId: { type: Type.STRING },
-                productCode: { type: Type.STRING },
-                productName: { type: Type.STRING },
-                size: { type: Type.STRING },
-                quantity: { type: Type.INTEGER },
-                unitPrice: { type: Type.INTEGER },
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  matchedProductId: { type: Type.STRING },
+                  productCode: { type: Type.STRING },
+                  productName: { type: Type.STRING },
+                  size: { type: Type.STRING },
+                  quantity: { type: Type.INTEGER },
+                  unitPrice: { type: Type.INTEGER },
+                },
+                required: ['productName', 'quantity'],
               },
-              required: ['productName', 'quantity'],
             },
+            note: { type: Type.STRING },
+            summary: { type: Type.STRING },
           },
-          note: { type: Type.STRING },
-          summary: { type: Type.STRING },
+          required: ['customerName', 'items'],
         },
-        required: ['customerName', 'items'],
       },
     },
-  });
+    options
+  );
 
   const jsonText = response.text?.trim() || '{}';
   const data = JSON.parse(jsonText) as Record<string, unknown>;

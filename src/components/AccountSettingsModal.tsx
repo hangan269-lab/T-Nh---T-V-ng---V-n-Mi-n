@@ -9,6 +9,7 @@ import {
   Gem,
   KeyRound,
   Leaf,
+  Loader2,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -74,6 +75,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const [showApiKey, setShowApiKey] = useState(false);
   const [keySource, setKeySource] = useState<'custom' | 'env' | 'none'>('none');
   const [apiTesting, setApiTesting] = useState(false);
+  const [apiTestStatus, setApiTestStatus] = useState<string | null>(null);
   const [apiMsg, setApiMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Change own PIN
@@ -141,12 +143,21 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
   const handleTestApiKey = async () => {
     setApiMsg(null);
     setApiTesting(true);
-    const result = await testGeminiConnection(apiKeyInput.trim() || undefined);
-    setApiTesting(false);
-    if (result.ok) {
-      setApiMsg({ type: 'success', text: result.message });
-    } else {
-      setApiMsg({ type: 'error', text: result.error });
+    setApiTestStatus('Đang kiểm tra kết nối Gemini 3.8 Flash...');
+    try {
+      const result = await testGeminiConnection(apiKeyInput.trim() || undefined, {
+        onStatusChange: (status) => {
+          setApiTestStatus(status.message);
+        },
+      });
+      if (result.ok) {
+        setApiMsg({ type: 'success', text: result.message });
+      } else {
+        setApiMsg({ type: 'error', text: result.error });
+      }
+    } finally {
+      setApiTesting(false);
+      setApiTestStatus(null);
     }
   };
 
@@ -422,7 +433,7 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                     Cấu hình Trợ lý Gemini AI (Nhập liệu thông minh)
                   </h3>
                   <p className="mt-0.5 text-xs text-[#57605E]">
-                    Sử dụng model <strong className="font-mono text-purple-700">gemini-3.8-flash</strong> (tự động dự phòng khi lỗi 404) để bóc tách đơn hàng từ tin nhắn và nạp hàng loạt từ Excel.
+                    Ưu tiên model <strong className="font-mono text-purple-700">gemini-3.8-flash</strong> (tự động thử lại &amp; dự phòng qua <span className="font-mono">gemini-3.0-flash</span>, <span className="font-mono">gemini-2.5-flash-lite</span> khi bận/404).
                   </p>
                 </div>
                 <div>
@@ -444,7 +455,17 @@ export const AccountSettingsModal: React.FC<AccountSettingsModalProps> = ({
                 </div>
               </div>
 
-              {apiMsg && (
+              {apiTesting && apiTestStatus && (
+                <div
+                  role="status"
+                  className="mt-3 flex items-center gap-2 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs font-medium text-purple-900"
+                >
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-purple-600" />
+                  <span>{apiTestStatus}</span>
+                </div>
+              )}
+
+              {apiMsg && !apiTesting && (
                 <div
                   role="status"
                   className={`mt-3 rounded-lg border px-3 py-2 text-xs font-medium ${

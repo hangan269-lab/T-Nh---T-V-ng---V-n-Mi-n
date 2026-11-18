@@ -29,6 +29,7 @@ import {
   ExtractedProductRow,
   getGeminiApiKey,
   isModelNotFoundError,
+  isOverloadOrRateLimitError,
   parseExpensesWithGemini,
   parseOrdersWithGemini,
   parseProductsWithGemini,
@@ -60,6 +61,9 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [rawText, setRawText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingStatusText, setLoadingStatusText] = useState(
+    'Đang dùng AI đọc và chuẩn hóa dữ liệu...'
+  );
   const [error, setError] = useState<string | null>(null);
 
   // Parsed preview states
@@ -140,11 +144,18 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
     }
 
     setLoading(true);
+    setLoadingStatusText('Đang dùng AI đọc và chuẩn hóa dữ liệu...');
     setError(null);
+
+    const callOptions = {
+      onStatusChange: (status: { message: string }) => {
+        setLoadingStatusText(status.message);
+      },
+    };
 
     try {
       if (mode === 'expenses') {
-        const rows = await parseExpensesWithGemini(rawText);
+        const rows = await parseExpensesWithGemini(rawText, callOptions);
         if (rows.length === 0) {
           setError('AI không tìm thấy dòng chi phí nào trong dữ liệu. Vui lòng kiểm tra lại nội dung.');
           setLoading(false);
@@ -153,7 +164,7 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
         setParsedExpenses(rows);
         setStep('preview');
       } else if (mode === 'orders') {
-        const rows = await parseOrdersWithGemini(rawText, existingProducts);
+        const rows = await parseOrdersWithGemini(rawText, existingProducts, callOptions);
         if (rows.length === 0) {
           setError('AI không tìm thấy đơn hàng nào trong dữ liệu. Vui lòng kiểm tra lại nội dung.');
           setLoading(false);
@@ -162,7 +173,7 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
         setParsedOrders(rows);
         setStep('preview');
       } else if (mode === 'products') {
-        const rows = await parseProductsWithGemini(rawText);
+        const rows = await parseProductsWithGemini(rawText, callOptions);
         if (rows.length === 0) {
           setError('AI không tìm thấy sản phẩm nào trong dữ liệu. Vui lòng kiểm tra lại nội dung.');
           setLoading(false);
@@ -177,8 +188,10 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
         setError(msg);
       } else if (msg.includes('API_KEY_INVALID') || msg.includes('400')) {
         setError('Mã Gemini API Key không hợp lệ. Vui lòng kiểm tra lại trong phần Cài đặt.');
-      } else if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
-        setError('Đã vượt quá hạn mức truy vấn miễn phí (Quota limit). Vui lòng thử lại sau ít phút.');
+      } else if (isOverloadOrRateLimitError(err)) {
+        setError(
+          'Máy chủ AI hiện đang quá tải hoặc vượt hạn mức tạm thời sau khi đã tự động thử lại nhiều lần. Vui lòng thử lại sau ít phút.'
+        );
       } else if (isModelNotFoundError(err)) {
         setError('Không tìm thấy model AI phù hợp (404) sau khi đã thử các model dự phòng. Vui lòng kiểm tra lại API Key hoặc thử lại sau.');
       } else {
@@ -307,6 +320,16 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
                 placeholder={placeholder}
                 className="w-full rounded-xl border border-[#E4DFD5] bg-white p-3 font-mono text-xs text-[#1A1F1E] placeholder:text-[#8A918E] focus:border-purple-500 focus:ring-1 focus:ring-purple-500 focus:outline-none"
               />
+
+              {loading && (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3.5 py-2.5 text-xs font-medium text-purple-900"
+                >
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-purple-600" />
+                  <span>{loadingStatusText}</span>
+                </div>
+              )}
 
               <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3.5 text-xs text-purple-900">
                 <div className="flex items-center gap-1.5 font-medium">
@@ -541,7 +564,7 @@ export const AiExcelImportModal: React.FC<AiExcelImportModalProps> = ({
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Đang dùng AI đọc và chuẩn hóa dữ liệu...</span>
+                    <span>{loadingStatusText}</span>
                   </>
                 ) : (
                   <>
