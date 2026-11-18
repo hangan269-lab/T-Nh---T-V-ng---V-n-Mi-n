@@ -485,9 +485,9 @@ export default function App() {
       playNotificationChime();
     }
     void pwa.showSystemNotification(
-      'Nhà Năn Niên - Thông báo thử',
+      'Nhã Vương Miên - Thông báo thử',
       `Xin chào ${currentUser.name}, thông báo đẩy trên thiết bị này đã sẵn sàng hoạt động!`,
-      { tag: 'n3-test-notification', tab: 'dashboard' }
+      { tag: 'nha-vuong-mien-test-notification', tab: 'dashboard' }
     );
   };
 
@@ -941,7 +941,7 @@ export default function App() {
     const today = getTodayISO();
     triggerDownload(
       exportStateToJSON(stateRef.current),
-      `tonha-tovuong-vanmien-backup-${today}.json`,
+      `nha-vuong-mien-backup-${today}.json`,
       'application/json;charset=utf-8'
     );
     showNotice('Đã xuất file sao lưu JSON.');
@@ -1312,11 +1312,11 @@ export default function App() {
           <div className="flex items-center gap-2">
             {renderAppIcon(state.appIcon)}
             <div className="font-serif text-lg font-bold tracking-tight text-[#1A1F1E]">
-              Tơ Nhã · Tơ Vương
+              Nhã Vương Miên
             </div>
           </div>
           <div className="mt-0.5 text-xs font-medium text-[#0D4F43]">
-            &amp; Vân Miên Studio
+            Tơ Nhã · Tơ Vương · Vân Miên
           </div>
         </div>
 
@@ -1459,11 +1459,19 @@ export default function App() {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <h1 className="font-serif text-lg font-semibold text-[#1A1F1E] truncate sm:text-xl">
-              {activeNav.label}
-            </h1>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="lg:hidden font-serif text-sm font-bold text-[#0D4F43] shrink-0">
+                Nhã Vương Miên
+              </span>
+              <span className="lg:hidden text-[#C8C2B6]" aria-hidden="true">
+                /
+              </span>
+              <h1 className="font-serif text-lg font-semibold text-[#1A1F1E] truncate sm:text-xl">
+                {activeNav.label}
+              </h1>
+            </div>
             <span className="hidden xl:inline text-xs text-[#57605E] whitespace-nowrap">
-              · {formatDateVN(todayISO)}
+              · Nhã Vương Miên · {formatDateVN(todayISO)}
             </span>
           </div>
 

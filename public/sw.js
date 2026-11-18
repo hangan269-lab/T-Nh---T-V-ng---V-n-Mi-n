@@ -1,5 +1,5 @@
 /* eslint-disable no-restricted-globals */
-const CACHE_NAME = 'n3-pwa-shell-v1';
+const CACHE_NAME = 'nvm-pwa-shell-v2';
 const APP_SHELL_URLS = [
   '/',
   '/index.html',
@@ -86,7 +86,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  let title = 'Nhà Năn Niên - Quản lý';
+  let title = 'Nhã Vương Miên - Quản lý Vận hành';
   let body = 'Có cập nhật dữ liệu mới từ thành viên trong nhóm.';
   let tab = 'dashboard';
 

@@ -793,7 +793,10 @@ test('SheetJS Excel (.xlsx) builders generate valid orders workbook and 3-sheet 
     'Doanh_thu_Don_hang',
     'Chi_tiet_Khoan_chi',
   ]);
-  assert.equal(financeWb.Sheets['Tong_hop_P&L']['A1'].v, 'BÁO CÁO TỔNG HỢP TÀI CHÍNH & LÃI LỖ (P&L)');
+  assert.equal(
+    financeWb.Sheets['Tong_hop_P&L']['A1'].v,
+    'NHÃ VƯƠNG MIÊN — BÁO CÁO TỔNG HỢP TÀI CHÍNH & LÃI LỖ (P&L)'
+  );
   assert.equal(financeWb.Sheets['Doanh_thu_Don_hang']['A1'].v, 'Mã đơn');
   assert.equal(financeWb.Sheets['Chi_tiet_Khoan_chi']['A1'].v, 'Ngày chi');
 });

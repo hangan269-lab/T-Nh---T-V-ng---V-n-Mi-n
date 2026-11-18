@@ -239,7 +239,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#0D4F43]/30 bg-[#0D4F43]/5 px-3 py-1.5 text-xs font-medium text-[#0D4F43] hover:bg-[#0D4F43]/10"
               >
                 <Download className="h-3.5 w-3.5" />
-                Cài Nhà Năn Niên ra màn hình chính
+                Cài Nhã Vương Miên ra màn hình chính
               </button>
             )}
           </div>

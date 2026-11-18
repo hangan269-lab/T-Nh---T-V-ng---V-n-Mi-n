@@ -82,9 +82,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         <div className="flex flex-col justify-between border-b border-[#ECE7DD] bg-[#F6F2EA] p-8 lg:col-span-5 lg:border-b-0 lg:border-r">
           <div>
             <div className="font-serif text-2xl font-bold tracking-tight text-[#1A1F1E]">
-              Tơ Nhã · Tơ Vương
+              Nhã Vương Miên
             </div>
-            <div className="mt-1 text-sm font-medium text-[#0D4F43]">&amp; Vân Miên Studio</div>
+            <div className="mt-1 text-sm font-medium text-[#0D4F43]">
+              Tơ Nhã · Tơ Vương · Vân Miên
+            </div>
             <p className="mt-6 text-sm leading-relaxed text-[#57605E]">
               Hệ thống quản lý bán hàng, tồn kho, tài chính và lịch sử thao tác đồng bộ thời gian thực trên Cloud Firestore cho đội ngũ 5 thành viên.
             </p>

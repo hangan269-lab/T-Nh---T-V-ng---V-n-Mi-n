@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Nhà Năn Niên - Quản lý",
-  "short_name": "Nhà Năn Niên",
-  "description": "Hệ thống quản lý vận hành, bán hàng, kho hàng và tài chính thời gian thực cho Tơ Nhã, Tơ Vương và Vân Miên.",
+  "name": "Nhã Vương Miên - Quản lý Vận hành",
+  "short_name": "Nhã Vương Miên",
+  "description": "Nhã Vương Miên — Hệ thống quản lý vận hành, bán hàng, kho hàng và tài chính thời gian thực cho Tơ Nhã, Tơ Vương và Vân Miên.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -151,7 +151,7 @@ export function downloadOrdersXLSX(
 ): string {
   const wb = buildOrdersWorkbook(orders);
   const suffix = shippingFilter === 'all' ? '' : `_${getShippingMethodSlug(shippingFilter)}`;
-  const filename = `Danh_sach_don_hang${suffix}_${formatFilenameDate(dateISO)}.xlsx`;
+  const filename = `Nha_Vuong_Mien_Danh_sach_don_hang${suffix}_${formatFilenameDate(dateISO)}.xlsx`;
   XLSX.writeFile(wb, filename);
   return filename;
 }
@@ -196,7 +196,7 @@ export function downloadOrderRecipientsXLSX(
   options: { includeCancelled?: boolean } = {}
 ): string {
   const wb = buildOrderRecipientsWorkbook(orders, shippingFilter, options);
-  const filename = `Danh_sach_nguoi_nhan_${getShippingMethodSlug(shippingFilter)}_${formatFilenameDate(dateISO)}.xlsx`;
+  const filename = `Nha_Vuong_Mien_Danh_sach_nguoi_nhan_${getShippingMethodSlug(shippingFilter)}_${formatFilenameDate(dateISO)}.xlsx`;
   XLSX.writeFile(wb, filename);
   return filename;
 }
@@ -207,7 +207,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
 
   // Sheet 1: Tong_hop_P&L
   const s1Rows: Array<Array<string | number>> = [
-    ['BÁO CÁO TỔNG HỢP TÀI CHÍNH & LÃI LỖ (P&L)'],
+    ['NHÃ VƯƠNG MIÊN — BÁO CÁO TỔNG HỢP TÀI CHÍNH & LÃI LỖ (P&L)'],
     [`Ngày xuất báo cáo: ${formatDateVN(getTodayISO())}`],
     [],
     ['1. QUỸ TIỀN MẶT HIỆN TẠI'],
@@ -395,7 +395,7 @@ export function buildFinanceWorkbook(state: AppState): XLSX.WorkBook {
 
 export function downloadFinanceXLSX(state: AppState, dateISO: string = getTodayISO()): string {
   const wb = buildFinanceWorkbook(state);
-  const filename = `Bao_cao_Tai_chinh_Thu_Chi_${formatFilenameDate(dateISO)}.xlsx`;
+  const filename = `Nha_Vuong_Mien_Bao_cao_Tai_chinh_Thu_Chi_${formatFilenameDate(dateISO)}.xlsx`;
   XLSX.writeFile(wb, filename);
   return filename;
 }
