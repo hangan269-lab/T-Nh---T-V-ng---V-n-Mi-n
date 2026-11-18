@@ -9,6 +9,10 @@ service cloud.firestore {
     // -------------------------------------------------------------------------
     // Global Validation & Workspace Primitives
     // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -296,94 +300,94 @@ service cloud.firestore {
     }
 
     // -------------------------------------------------------------------------
-    // Collection Match Rules (Workspace-Scoped Cloud Sync without Google Auth)
+    // Collection Match Rules (Workspace-Scoped Cloud Sync + Anonymous Auth Gate)
     // -------------------------------------------------------------------------
     match /system/{docId} {
-      allow get: if isValidId(docId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(docId) && isValidSystemMeta(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(docId) && isValidSystemMeta(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(docId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(docId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(docId) && isValidSystemMeta(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(docId) && isValidSystemMeta(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(docId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /products/{productId} {
-      allow get: if isValidId(productId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(productId) && isValidProduct(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(productId) && isValidProduct(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(productId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(productId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(productId) && isValidProduct(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(productId) && isValidProduct(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(productId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /stockImports/{importId} {
-      allow get: if isValidId(importId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(importId) && isValidStockImport(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(importId) && isValidStockImport(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(importId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(importId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(importId) && isValidStockImport(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(importId) && isValidStockImport(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(importId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /orders/{orderId} {
-      allow get: if isValidId(orderId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(orderId) && isValidOrder(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(orderId) && isValidOrder(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(orderId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(orderId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(orderId) && isValidOrder(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(orderId) && isValidOrder(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(orderId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /shareholders/{shareholderId} {
-      allow get: if isValidId(shareholderId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(shareholderId) && isValidShareholder(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(shareholderId) && isValidShareholder(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(shareholderId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(shareholderId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(shareholderId) && isValidShareholder(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(shareholderId) && isValidShareholder(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(shareholderId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /expenses/{expenseId} {
-      allow get: if isValidId(expenseId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(expenseId) && isValidExpense(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(expenseId) && isValidExpense(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(expenseId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(expenseId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(expenseId) && isValidExpense(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(expenseId) && isValidExpense(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(expenseId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /budgetItems/{budgetId} {
-      allow get: if isValidId(budgetId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(budgetId) && isValidBudgetItem(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(budgetId) && isValidBudgetItem(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(budgetId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(budgetId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(budgetId) && isValidBudgetItem(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(budgetId) && isValidBudgetItem(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(budgetId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /accounts/{accountId} {
-      allow get: if isValidId(accountId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(accountId) && isValidUserAccount(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(accountId) && isValidUserAccount(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(accountId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(accountId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(accountId) && isValidUserAccount(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(accountId) && isValidUserAccount(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(accountId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /auditLogs/{logId} {
-      allow get: if isValidId(logId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(logId) && isValidAuditLog(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(logId) && isValidAuditLog(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(logId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(logId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(logId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /backups/{backupId} {
-      allow get: if isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(backupId) && isValidBackupSnapshot(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(backupId) && isValidBackupSnapshot(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(backupId) && isValidBackupSnapshot(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(backupId) && isValidBackupSnapshot(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(backupId) && isLegacyOrStudioWorkspace(existing());
     }
 
     match /chinaPartners/{partnerId} {
-      allow get: if isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
-      allow list: if isStudioWorkspace(existing());
-      allow create: if isValidId(partnerId) && isValidChinaPartner(incoming()) && hasValidCreateMeta(incoming());
-      allow update: if isValidId(partnerId) && isValidChinaPartner(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
-      allow delete: if isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
+      allow get: if isSignedIn() && isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
+      allow list: if isSignedIn() && isStudioWorkspace(existing());
+      allow create: if isSignedIn() && isValidId(partnerId) && isValidChinaPartner(incoming()) && hasValidCreateMeta(incoming());
+      allow update: if isSignedIn() && isValidId(partnerId) && isValidChinaPartner(incoming()) && isLegacyOrStudioWorkspace(existing()) && hasValidUpdateMeta();
+      allow delete: if isSignedIn() && isValidId(partnerId) && isLegacyOrStudioWorkspace(existing());
     }
   }
 }

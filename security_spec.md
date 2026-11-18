@@ -2,22 +2,21 @@
 
 ## 1. Data Invariants
 1. **Default-Deny Safety Net**: Every unmatched path is denied read and write access (`match /{document=**} { allow read, write: if false; }`).
-2. **Verified Identity Gate**: No unauthenticated or email-unverified client (`request.auth == null || request.auth.token.email_verified != true`) may read, list, create, update, or delete any document.
-3. **Workspace Membership / PII Isolation**: Every collection document (`orders`, `accounts`, `shareholders`, `expenses`, `products`, `stockImports`, `budgetItems`, `auditLogs`, `system`) restricts `get` and `list` to verified workspace members (`ownerUid == request.auth.uid` or `request.auth.token.email in resource.data.memberEmails`). No blanket `allow read: if isSignedIn();`.
-4. **Admin Bootstrap & RBAC Separation**: `hangan269@gmail.com` (verified) is the bootstrapped Firebase Admin (`isAdmin()`). Non-admin members cannot delete products, expenses, shareholders, or accounts, cannot create/edit accounts (except updating their own PIN field if authorized), and cannot mutate cancelled orders.
-5. **Temporal & Relational Integrity**: `serverCreatedAt` and `ownerUid` are immutable after creation; `serverUpdatedAt` must equal `request.time`.
-6. **Anti-Shadow-Field & Size Bounds**: Every collection enforces strict `keys().hasAll(...)` + `keys().hasOnly(...)`, path ID regex `^[a-zA-Z0-9_\-]+$`, bounded arrays (`items.size() <= 30`, `memberEmails.size() <= 20`), and bounded string lengths.
+2. **Anonymous Auth Gate (`request.auth != null`)**: Every `get`, `list`, `create`, `update`, and `delete` operation across all 11 collections (`system`, `products`, `stockImports`, `orders`, `shareholders`, `expenses`, `budgetItems`, `accounts`, `auditLogs`, `backups`, `chinaPartners`) requires `isSignedIn()` (`request.auth != null`), satisfied automatically by silent `signInAnonymously(auth)` on app startup. (`email_verified` is intentionally NOT required so Anonymous Auth sessions work seamlessly.)
+3. **Workspace Isolation**: Every collection document enforces `workspaceId == 'nhavuongmien_studio'` on creates, updates, and `list` queries (`isStudioWorkspace(existing())`), and allows legacy studio migration reads/updates via `isLegacyOrStudioWorkspace(existing())`.
+4. **Temporal Integrity**: `serverCreatedAt` is immutable after creation (`incoming().serverCreatedAt == existing().serverCreatedAt`); `serverCreatedAt` (create) and `serverUpdatedAt` (create/update) must strictly equal `request.time`.
+5. **Anti-Shadow-Field & Size Bounds**: Every collection enforces strict `keys().hasAll(...)` + `keys().hasOnly(...)`, path ID regex `^[a-zA-Z0-9_\-]+$`, bounded arrays (`items.size() <= 30`, backup lists bounded), and bounded string lengths.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads (Must All Return PERMISSION_DENIED)
-1. **Unauthenticated Order Read/List**: Anonymous client requests `get` or `list` on `/orders` -> DENIED.
-2. **Unverified Email Spoof**: Signed-in token with `email: "hangan269@gmail.com"` and `email_verified: false` attempts write -> DENIED.
-3. **Foreign Signed-In User PII Scrape**: Verified Google user `attacker@example.com` (not in `memberEmails`, not `ownerUid`) attempts `get` on `/orders/ord_01` or `/accounts/acc_ngan` -> DENIED.
-4. **Blanket List Query**: Verified user runs unfiltered `list` without matching `memberEmails` / `ownerUid` -> DENIED.
-5. **Identity Spoofing on Create**: User creates `/orders/ord_99` with `ownerUid: "someone_else"` -> DENIED.
-6. **Shadow / Ghost Field Injection**: User creates `/orders/ord_99` including extra field `isVerifiedAdmin: true` -> DENIED (`keys().hasOnly(...)`).
-7. **Path ID Poisoning**: User attempts write to `/products/..junk$id!` or 500-char ID -> DENIED (`isValidId()`).
+1. **Unauthenticated Order Read/List**: Client with `request.auth == null` requests `get` or `list` on `/orders` -> DENIED.
+2. **Unauthenticated Write**: Client with `request.auth == null` attempts `create` or `update` on `/products` or `/expenses` -> DENIED.
+3. **Foreign Workspace Read/List**: Signed-in client queries or reads document with `workspaceId != 'nhavuongmien_studio'` -> DENIED.
+4. **Unmatched Collection Access**: Signed-in client attempts read/write on `/test/connection` or any undeclared collection -> DENIED by global catch-all.
+5. **Foreign Workspace Write**: Signed-in client creates `/orders/ord_99` with `workspaceId: "other_studio"` -> DENIED.
+6. **Shadow / Ghost Field Injection**: Signed-in client creates `/orders/ord_99` including extra field `isVerifiedAdmin: true` -> DENIED (`keys().hasOnly(...)`).
+7. **Path ID Poisoning**: Signed-in client attempts write to `/products/..junk$id!` or 500-char ID -> DENIED (`isValidId()`).
 8. **Resource Exhaustion / Denial of Wallet**: Order `shippingAddress` with 5,000 characters (`> 500`) -> DENIED.
 9. **Unbounded Array Attack**: Order `items` with 35 items (`> 30`) or empty `items: []` -> DENIED.
 10. **Client Timestamp Forgery**: Update payload sends client `Date` for `serverUpdatedAt` instead of `request.time` -> DENIED.
-11. **Terminal State Mutation by Non-Admin**: Non-admin member attempts to mutate an already cancelled order (`existing().isCancelled == true`) -> DENIED.
-12. **Privilege Escalation on Accounts**: Non-admin member attempts to change `role` to `'Admin'` on `/accounts/acc_giang` -> DENIED.
+11. **Immutable Timestamp Mutation**: Update payload modifies `serverCreatedAt` -> DENIED.
+12. **Negative Discount / Invalid Enum Injection**: Order `discount: -50000` or invalid `brand` enum -> DENIED.

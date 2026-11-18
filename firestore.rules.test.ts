@@ -16,11 +16,15 @@ function validateOrderPayload(
   docId: unknown,
   data: Record<string, unknown>,
   options: {
+    isSignedIn?: boolean;
     isCreate?: boolean;
     existing?: Record<string, unknown>;
     requestTimeMs?: number;
   } = {}
 ): { allowed: boolean; reason?: string } {
+  if (options.isSignedIn === false) {
+    return { allowed: false, reason: 'PERMISSION_DENIED: unauthenticated client (request.auth == null)' };
+  }
   if (!isValidId(docId)) {
     return { allowed: false, reason: 'PERMISSION_DENIED: invalid document ID' };
   }
@@ -80,7 +84,7 @@ function validateOrderPayload(
   return { allowed: true };
 }
 
-test('firestore.rules and firebase-blueprint.json stay synchronized without Google Auth gates', () => {
+test('firestore.rules and firebase-blueprint.json stay synchronized and enforce Anonymous Auth (request.auth != null)', () => {
   const rulesText = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
   const blueprint = JSON.parse(
     fs.readFileSync(path.resolve(process.cwd(), 'firebase-blueprint.json'), 'utf8')
@@ -97,20 +101,31 @@ test('firestore.rules and firebase-blueprint.json stay synchronized without Goog
     'accounts',
     'auditLogs',
     'backups',
+    'chinaPartners',
   ];
 
   assert.ok(rulesText.includes('allow read, write: if false;'));
-  assert.ok(rulesText.includes("nhavuongmien_studio"));
-  assert.equal(rulesText.includes('request.auth'), false);
+  assert.ok(rulesText.includes('nhavuongmien_studio'));
+  assert.ok(rulesText.includes('function isSignedIn()'));
+  assert.ok(rulesText.includes('request.auth != null'));
+  assert.equal(rulesText.includes('email_verified'), false);
+
   for (const col of requiredMatches) {
     assert.ok(
       Object.keys(blueprint.firestore).some((p) => p.startsWith(`/${col}/`)),
       `Blueprint missing collection ${col}`
     );
-    assert.ok(
-      rulesText.includes(`match /${col}/`),
-      `firestore.rules missing match block for ${col}`
-    );
+    const matchRegex = new RegExp(`match /${col}/\\{[^}]+\\}\\s*\\{([\\s\\S]*?)\\n    \\}`);
+    const matchBlock = matchRegex.exec(rulesText);
+    assert.ok(matchBlock, `firestore.rules missing match block for ${col}`);
+    const blockBody = matchBlock[1];
+    for (const op of ['get', 'list', 'create', 'update', 'delete']) {
+      const opRegex = new RegExp(`allow ${op}: if isSignedIn\\(\\)`);
+      assert.ok(
+        opRegex.test(blockBody),
+        `firestore.rules collection ${col} missing isSignedIn() check on ${op}`
+      );
+    }
   }
 });
 
@@ -153,10 +168,21 @@ test('Adversarial payloads fail schema, size, path, workspace, and timestamp che
   // Valid baseline passes
   assert.equal(
     validateOrderPayload('ord_99', validOrder, {
+      isSignedIn: true,
       isCreate: true,
       requestTimeMs: serverNow,
     }).allowed,
     true
+  );
+
+  // 0. Unauthenticated client (request.auth == null) rejected
+  assert.equal(
+    validateOrderPayload('ord_99', validOrder, {
+      isSignedIn: false,
+      isCreate: true,
+      requestTimeMs: serverNow,
+    }).allowed,
+    false
   );
 
   // 1. Foreign workspaceId rejected

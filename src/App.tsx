@@ -104,6 +104,7 @@ import {
   downloadOrdersXLSX,
 } from './utils/excelExport';
 import { formatFirestoreErrorForUser } from './utils/firestoreError';
+import { ensureAnonymousAuth, testConnection } from './firebase';
 import {
   commitStateDiffToFirestore,
   ensureWorkspaceSeeded,
@@ -188,6 +189,8 @@ export default function App() {
   const metaCacheRef = useRef<FirestoreMetaCache>(new Map());
 
   const [firestoreLoading, setFirestoreLoading] = useState(true);
+  const [startupError, setStartupError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const [fatalError, setFatalError] = useState<Error | null>(null);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(() => {
@@ -236,7 +239,17 @@ export default function App() {
 
     const connectFirestore = async () => {
       setFirestoreLoading(true);
+      setStartupError(null);
       try {
+        await ensureAnonymousAuth();
+        if (cancelled) return;
+
+        const conn = await testConnection();
+        if (cancelled) return;
+        if (!conn.ok && conn.offline) {
+          throw new Error('the client is offline');
+        }
+
         await ensureWorkspaceSeeded(metaCacheRef.current);
         if (cancelled) return;
 
@@ -260,20 +273,25 @@ export default function App() {
           },
           onReady: () => {
             if (!cancelled) {
+              setStartupError(null);
               setFirestoreLoading(false);
             }
           },
           onError: (err) => {
             if (!cancelled) {
               setFirestoreLoading(false);
-              setFatalError(err instanceof Error ? err : new Error(String(err)));
+              if (!currentUserIdRef.current || stateRef.current.accounts.length === 0) {
+                setStartupError(formatFirestoreErrorForUser(err));
+              } else {
+                setFatalError(err instanceof Error ? err : new Error(String(err)));
+              }
             }
           },
         });
       } catch (err) {
         if (!cancelled) {
           setFirestoreLoading(false);
-          setFatalError(err instanceof Error ? err : new Error(String(err)));
+          setStartupError(formatFirestoreErrorForUser(err));
         }
       }
     };
@@ -286,7 +304,7 @@ export default function App() {
         activeUnsubscribe();
       }
     };
-  }, []);
+  }, [retryNonce]);
 
   useEffect(() => {
     if (!notice) return;
@@ -331,11 +349,13 @@ export default function App() {
     setNotice(null);
   };
 
-  if (firestoreLoading || !currentUser) {
+  if (firestoreLoading || startupError || !currentUser) {
     return (
       <LoginScreen
         accounts={state.accounts}
         firestoreLoading={firestoreLoading}
+        startupError={startupError}
+        onRetryStartup={() => setRetryNonce((n) => n + 1)}
         onLogin={handleLogin}
       />
     );

@@ -1,16 +1,29 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Cloud, KeyRound, Loader2, Lock, ShieldCheck, UserCheck } from 'lucide-react';
+import {
+  AlertTriangle,
+  Cloud,
+  KeyRound,
+  Loader2,
+  Lock,
+  RefreshCw,
+  ShieldCheck,
+  UserCheck,
+} from 'lucide-react';
 import { UserAccount } from '../types/erp';
 
 interface LoginScreenProps {
   accounts: UserAccount[];
   firestoreLoading: boolean;
+  startupError?: string | null;
+  onRetryStartup?: () => void;
   onLogin: (identifier: string, pin: string) => { ok: true } | { ok: false; error: string };
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   accounts,
   firestoreLoading,
+  startupError,
+  onRetryStartup,
   onLogin,
 }) => {
   const [selectedId, setSelectedId] = useState<string>(accounts[0]?.id ?? 'acc_ngan');
@@ -107,11 +120,36 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <div className="flex min-h-[340px] flex-col items-center justify-center text-center">
               <Loader2 className="h-7 w-7 animate-spin text-[#0D4F43]" />
               <p className="mt-3 text-sm font-medium text-[#1A1F1E]">
-                Đang đồng bộ danh sách thành viên &amp; dữ liệu từ Cloud Firestore...
+                Đang xác thực kết nối bảo mật &amp; đồng bộ dữ liệu từ Cloud Firestore...
               </p>
               <p className="mt-1 text-xs text-[#57605E]">
                 Vui lòng chờ trong giây lát.
               </p>
+            </div>
+          ) : startupError ? (
+            <div className="flex min-h-[340px] flex-col items-center justify-center text-center">
+              <div className="rounded-xl bg-[#A63429]/10 p-3 text-[#A63429]">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <h1 className="mt-4 font-serif text-xl font-semibold text-[#1A1F1E]">
+                Không thể kết nối Firebase
+              </h1>
+              <p
+                role="alert"
+                className="mt-2 max-w-md text-sm leading-relaxed text-[#57605E]"
+              >
+                {startupError}
+              </p>
+              {onRetryStartup && (
+                <button
+                  type="button"
+                  onClick={onRetryStartup}
+                  className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#0D4F43] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#093B32]"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Thử lại
+                </button>
+              )}
             </div>
           ) : (
             <>
